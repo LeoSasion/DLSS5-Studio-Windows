@@ -298,9 +298,13 @@ def validate_settings(s):
         raise HTTPException(400, "所选编码与文件格式不兼容。")
 
 
-def model_args(s, for_video=False):
+def model_args(s, for_video=False, selection=None):
     args = engine.nr_model_args(s.style, s.preset, s.intensity, s.local_structure, s.local_tone,
         s.skin, s.global_tone, s.detail, s.color, s.ui_correction, s.auto_mask, s.hdr if not for_video else False)
+    # The reviewed runtime selects the lighter B network for "Default" without
+    # adding a UI control. Explicit legacy/API presets remain explicit.
+    if engine.PRESETS[s.preset] == 0 and getattr(selection, "nr_preset", 0):
+        args[args.index("--nr-preset") + 1] = str(selection.nr_preset)
     args += ["--nr-stability", str(s.stability), "--nr-protect-skin", str(s.protect_skin),
              "--nr-protect-highlights", str(s.protect_highlights), "--nr-render-scale", str(s.render_scale)]
     if s.protect_region:
@@ -312,7 +316,7 @@ def build_command(s, item, folder, selection, render_key=None, stage_key=None):
     sr = selection.args()
     if item["kind"] == "image":
         return [engine.EXE, "--nr-run", "--in", item["path"], "--out", str(folder),
-                "--nr-cache-dir", str(folder / "nr-cache")] + sr + model_args(s) + \
+                "--nr-cache-dir", str(folder / "nr-cache")] + sr + model_args(s, selection=selection) + \
             engine.size_args_image(item["path"], s.size, 0, 0, 1)
     out = folder / ("result." + s.container)
     bitrate = engine.recommended_bitrate(s.size, item["width"], item["height"]) if s.bitrate_mode == "auto" else s.bitrate
@@ -320,7 +324,7 @@ def build_command(s, item, folder, selection, render_key=None, stage_key=None):
             "--nr-motion-engine", s.motion_engine, "--nr-motion", "1" if s.motion else "0",
             "--codec", s.codec, "--enc-preset", s.enc_preset, "--bit-depth", str(s.bit_depth),
             "--prores-profile", s.prores_profile, "--audio", s.audio, "--cq", str(s.cq),
-            "--bitrate", str(bitrate)] + sr + model_args(s, for_video=True) + engine.size_args_video(s.size, 0, 0, 1)
+            "--bitrate", str(bitrate)] + sr + model_args(s, for_video=True, selection=selection) + engine.size_args_video(s.size, 0, 0, 1)
     if s.motion_vis:
         args.append("--nr-motion-vis")
     if s.frames:

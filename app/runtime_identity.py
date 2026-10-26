@@ -148,6 +148,8 @@ class RuntimeIdentity:
             "nr_video.py", "render_engine.py", "video_pipeline.py", "video_quality.py")
             if (self.root / name).is_file()]
         runtime = self.file(selection.dll_dir / "nvngx_dlssnr.dll")
+        runtime["file_version"] = windows_file_version(selection.dll_dir / "nvngx_dlssnr.dll")
+        runtime["default_nr_preset"] = getattr(selection, "nr_preset", 0)
         identity = {"identity_schema": 1, "pipeline": PIPELINE_VERSION,
                     "renderer": renderer, "media_tools": media_tools, "processing": pipeline,
                     "runtime": runtime, "driver": drivers, "model": self.models(),

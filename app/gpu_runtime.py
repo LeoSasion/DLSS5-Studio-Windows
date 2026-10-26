@@ -124,6 +124,7 @@ class Selection:
     profile: str
     dll_dir: Path
     sha256: str
+    nr_preset: int = 0
 
     def args(self):
         return ['--adapter', str(self.adapter), '--dll-dir', str(self.dll_dir), '--nr-sr-preset', 'default']
@@ -165,7 +166,10 @@ class GpuRuntime:
                     if stat.st_size != info['bytes'] or hashlib.sha256(dll.read_bytes()).hexdigest() != info['sha256']:
                         raise RuntimeError('DLSS 5 组件校验失败，请重新解压完整部署包。')
                     self.checked[key] = True
-                self.selection = Selection(adapter['index'], adapter['name'], adapter['luid'], profile, dll.parent, info['sha256'])
+                nr_preset = info.get('default_nr_preset', 0)
+                if type(nr_preset) is not int or nr_preset not in (0, 1, 2):
+                    raise RuntimeError('DLSS 5 组件默认网络配置无效。')
+                self.selection = Selection(adapter['index'], adapter['name'], adapter['luid'], profile, dll.parent, info['sha256'], nr_preset)
                 self.error = None
             except (OSError, ValueError, KeyError, RuntimeError) as exc:
                 self.selection = None

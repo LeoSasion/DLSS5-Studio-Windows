@@ -1,7 +1,7 @@
-DLSS Studio — Windows x64 优化版
-构建日期：2026-10-26；本地待发布构建，不代表历史发布包已包含下述新功能。
-完整包：DLSS-Studio-Optimized-20261026-Windows-x64.zip
-应用增量包：DLSS-Studio-Optimized-20261026-update.zip
+DLSS Studio — Windows x64 运行库更新版
+更新日期：2026-10-27；本地待发布构建，不代表历史发布包已包含本次更新。
+完整包：DLSS-Studio-Runtime-20261027-Windows-x64.zip
+本次更新NR运行库至310.9.16.0，不增加界面选项；没有模型增量包，请使用新的完整包。
 
 一、开始使用
 
@@ -11,7 +11,9 @@ DLSS Studio — Windows x64 优化版
 
 Python、依赖、FFmpeg 和处理引擎已内置，无需管理员权限，不需要另装 Python 或 pip。独立窗口使用 Microsoft WebView2；未安装时会询问是否通过包内微软引导组件安装，首次安装此组件需要联网。
 
-支持 Windows 10/11 x64，窗口使用 .NET Framework 4.6.2 或更高版本。神经渲染需要兼容的 NVIDIA 显卡与驱动；此包不安装驱动。当前已在 RTX PRO 6000 Blackwell、591.86 驱动验证图片和视频处理。RTX 30/40 系已有识别、编号与组件匹配测试，仍需对应实体卡验证；不能据此承诺所有 NVIDIA 显卡或官方支持范围。
+支持 Windows 10/11 x64，窗口使用 .NET Framework 4.6.2 或更高版本。神经渲染需要兼容的 NVIDIA 显卡与驱动；此包不安装或修改驱动。2026-10-26曾在RTX PRO 6000 Blackwell、591.86驱动上验证旧310.8运行库；本次310.9.16.0仅完成文件身份核对及引擎编译，按更新要求未运行测试或GPU处理，591.86是否能运行新版尚待人工反馈。新版可能需要更高驱动。NVIDIA初版DLSS 5产品使用616.64、RTX Remix 1.6.1使用616.92作为产品基线，二者都不是已核实的该DLL精确最低要求。RTX 30/40仍需对应实体卡反馈，不能据此承诺全部显卡或官方支持范围。
+
+本包RTX 30/40共用ShortFuse / OpenNR社区兼容库，RTX 50使用NVIDIA原版，均为310.9.16.0。默认采用较轻量的NR网络Preset B（值2），原有默认/自然/电影外观风格与参数含义保持不变。网络B与外观风格是独立设置，不新增选择界面；本次没有测量画质、速度或显存变化。
 
 二、窗口、预览和参数版本
 
@@ -84,47 +86,35 @@ logs\desktop-server.log       服务日志
 
 启动失败时确认完整解压、目录可写、WebView2可用，并查看服务日志。处理失败时查看任务日志、磁盘空间和编码器可用性。组件“已匹配”不等于已成功渲染，连续视频自检可核对本次运行。包内不包含制作工作区的历史素材、结果或日志。
 
-八、应用增量更新与回退
+八、升级与回退
 
-增量包只更新app中的应用代码、界面、渲染EXE/转发DLL和桌面启动器；不更新Python依赖、FFmpeg或架构模型DLL，不覆盖uploads、ui_out、studio-state.json、desktop-profile。它需要已有完整可用环境，不能替代首次安装。需要新依赖或媒体工具时请使用完整包。
+本次NR更新通过新的完整包提供。将新包解压到独立文件夹，保留旧包；先关闭旧程序，再使用新包。需要迁移历史时一并保留app\uploads、app\ui_out和app\studio-state.json。模型改变会使旧模型缓存和未完成任务的接续信息失效，已有成片可继续保留。
 
-先暂停需要保留进度的视频，等待显示“已暂停”，再关闭独立窗口和该包的处理服务。不要直接把增量ZIP解压覆盖。使用本版tools\incremental_update.py执行，工具校验文件SHA-256，备份后更新，失败时尝试恢复；更新成功会输出回退编号，备份位于目标包updates\history\。回退前同样关闭程序；更新后又手动修改的应用文件会拒绝被回退覆盖。
+旧版应用增量工具tools\incremental_update.py仍只更新应用代码、界面、渲染程序和桌面启动器，不替换架构模型DLL、Python或FFmpeg，也不覆盖素材、成片、任务索引与desktop-profile。因此旧版应用增量包不能完成这次310.9.16.0模型升级。本次不提供模型增量包。
 
-以下为PowerShell命令，从带有本版runtime和tools的完整包根目录执行。目标目录可以是另一份已解压的旧包；按实际路径修改：
-
-.\runtime\python.exe -X utf8 -B .\tools\incremental_update.py apply "D:\Apps\DLSS Studio" "D:\Downloads\DLSS-Studio-Optimized-20261026-update.zip"
-
-回退，将“更新输出的回退编号”替换为上一步输出：
-
-.\runtime\python.exe -X utf8 -B .\tools\incremental_update.py rollback "D:\Apps\DLSS Studio" "更新输出的回退编号"
-
-旧包若没有tools，可使用本次另附的DLSS-Studio-update.py，配合旧包内runtime\python.exe运行，例如在旧包根目录执行：
-
-.\runtime\python.exe -X utf8 -B "D:\Downloads\DLSS-Studio-update.py" apply "." "D:\Downloads\DLSS-Studio-Optimized-20261026-update.zip"
-
-该独立脚本与本版tools\incremental_update.py相同，只使用Python标准库。请取得同版可信脚本；SHA-256用于核对完整性，不代替下载来源的可信性。本次文件仅在本地产出，尚未发布到历史GitHub Release。
+旧发布包与工作区的310.8文件及组件回退记录保留。为减少体积，新完整包只带当前两份不同的NR DLL（30/40共享一份、50一份），不带旧运行库或其回退历史；需要回到旧运行库时使用保留的旧包。
 
 九、可选本地组件导入和回退
 
-通常无需更换模型DLL。本版按GPU架构选择组件并核对哈希；未知显卡、缺失或校验失败会说明原因。组件工具不会联网下载，导入需要自行取得有权使用的x64 NR DLL、可信SHA-256、版本与来源。三套初始DLL的来源和校验记录在app\dlss5-components.json，适用版权和条款见licenses，模型不因本项目开源而改变许可。
+通常无需手动更换模型DLL。本版按GPU架构选择组件并核对哈希；未知显卡、缺失或校验失败会说明原因。三套配置对应两份当前DLL，来源与校验记录在app\dlss5-components.json，适用版权和条款见licenses；模型不因本项目开源而改变许可。
 
-从包根目录运行，--app在子命令前：
+当前310.9.16.0文件身份：
+- RTX 30/40：ShortFuse / OpenNR社区兼容版，276,162,560字节，未签名。SHA-256：CDFA6C1EC784867182164C7836F324F087B5C9F374D0C9FE46F54999FEABF3ED。
+- RTX 50：NVIDIA原版，266,424,944字节，NVIDIA Authenticode签名有效。文件从LoreanXavier镜像取得，SHA-256与NVIDIA RTX Remix 1.6.1官方CRC一致：2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F。
+
+本地组件工具可列出、校验导入和回退已有组件，不联网下载。列出组件：
 
 .\runtime\python.exe -X utf8 -B .\tools\components.py --app .\app list
 
-关闭程序后导入，以下为字段示例，必须替换文件、系列、完整64个十六进制字符的SHA-256、实际版本及来源：
+文件匹配或签名有效只确认身份，不代表当前设备已成功渲染。若人工使用遇到失败，请保留任务日志和“复制诊断”的信息用于反馈。
 
-.\runtime\python.exe -X utf8 -B .\tools\components.py --app .\app import "D:\Models\nvngx_dlssnr.dll" --profile rtx50 --sha256 "发布方提供的64个十六进制字符SHA256" --version "实际版本" --source "实际来源"
+十、历史验证与本次范围
 
-工具校验x64 DLL和SHA-256，按内容保存新目录并原子切换清单，输出rollback_revision。重开程序后运行“连续视频自检”，确认实际成功渲染；组件更换可能使旧任务缓存或接续失效。
+2026-10-27运行库更新完成了两份310.9.16.0 DLL的身份核对及新引擎/转发DLL编译；未运行自动化测试、GPU测试、性能测试或新版完整包运行验证，效果与兼容性等待人工反馈。
 
-.\runtime\python.exe -X utf8 -B .\tools\components.py --app .\app rollback "导入输出的rollback_revision"
+以下均为2026-10-26旧310.8运行库的历史记录，不能作为310.9.16.0通过验证的依据：90项Python与9项Node回归，以及SDR8/16 bit、PQ/HLG、P3-D65、模型缓存后重合成、真实视频暂停重开接续、PTS和媒体封装、独立窗口玻璃最大化还原、真实上传/增强/对比/下载。历史指定16 bit原始样片在细节强度0时逐样本一致；有损编码导出不作逐样本一致承诺。
 
-十、验证与范围
-
-已实际验证SDR8/16 bit、PQ/HLG、P3-D65、模型缓存后重合成、真实视频暂停重开接续、PTS和媒体封装，以及独立窗口玻璃最大化还原、真实上传/增强/对比/下载。指定16 bit原始样片在细节强度0时逐样本一致；有损编码导出不作逐样本一致承诺。完整归档包解压后的最终检查另记录，不以源码测试替代。
-
-640×360、60帧原始引擎对照中，排除初始化的稳定吞吐：运动补偿开约提升22.6%，关约27.3%，输出字节一致。仅针对已测机器与样片，不外推4K、完整导出或其他硬件。
+上述旧运行库的640×360、60帧原始引擎对照中，排除初始化的稳定吞吐：运动补偿开约提升22.6%，关约27.3%，输出字节一致。仅针对当时机器与样片，不外推新运行库、4K、完整导出或其他硬件。
 
 源码位置：app\web、app\studio_server.py、launcher-source\DesktopShell.cs、launcher-source\StudioService.cs；第三方说明：licenses\；文件SHA-256清单：manifest.json。该清单用于完整性核对，不是数字签名。更详细源码与验证记录见项目中的使用说明.md、source\ENGINE-PROTOCOL.md和outputs\本轮证据目录。
 

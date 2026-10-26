@@ -2,13 +2,21 @@
 
 The Studio invokes this renderer directly for images and through `app/nr_video.py` for video. Query `video2dlssnr.exe --nr-capabilities` before using optional protocol features. A matched DLL is not proof that NGX evaluation works on a particular GPU or driver.
 
-Build the renderer and its unchanged forwarder with:
+Build the renderer and its matching forwarder with:
 
 ```powershell
 app/.venv/Scripts/python.exe -X utf8 -B packaging/build_engine.py --tests
 ```
 
 The build script uses the extracted Microsoft compiler/SDK and NVIDIA import library prepared by `packaging/bootstrap_compiler.py`; it does not require a system Visual Studio installation. Outputs go to `source/out`, without overwriting the application runtime. Keep the forwarder and executable from the same validated build.
+
+## NR model preset typing (2026-10-27)
+
+The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight model B; 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
+
+NR creation writes `DLSSNR.Hint.Render.Preset` as an I32. The driver-core capability block has a separately negotiated signed setter: the host only considers its known 32-bit integer slots 3/4 after identifying UInt and float, excludes those identified slots and the ULL slot, and round-trips a positive integer with GetI. It does not scan possible float/double/resource/pointer setters. An unknown layout is not guessed: the legacy automatic preset can retain its old UInt route, while an explicit preset fails if the new host cannot establish an I32 setter.
+
+The forwarder retains the two-argument `fwd_set_slots` export and the `NrModelParams` POD layout. The optional `fwd_set_int_slot(int)` extension configures signed dispatch; older hosts keep their previous route. Image, default video and high-precision video configure it through the same loader. The executable and forwarder should be deployed together. This source change does not rewrite GPU architecture, alter model binaries or promise compatibility with a new runtime/driver; no rendering or tests were run for this typing-only patch.
 
 ## Video pixels and color
 

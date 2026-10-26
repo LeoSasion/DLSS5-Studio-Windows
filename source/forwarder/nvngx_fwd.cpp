@@ -21,9 +21,12 @@ namespace {
 using PFN_SetULL = void(__thiscall*)(void*, const char*, unsigned long long);
 using PFN_SetFloat = void(__thiscall*)(void*, const char*, float);
 using PFN_SetUInt = void(__thiscall*)(void*, const char*, unsigned int);
+using PFN_SetInt = void(__thiscall*)(void*, const char*, int);
 
 int g_uintSlot = 3;
 int g_floatSlot = 6;  // host confirms via probe; 6 on driver 616.56
+int g_intSlot = -1;
+bool g_intSlotConfigured = false;
 
 void setUInt(void* p, const char* n, unsigned int v) {
     void** vt = *reinterpret_cast<void***>(p);
@@ -32,6 +35,10 @@ void setUInt(void* p, const char* n, unsigned int v) {
 void setFloat(void* p, const char* n, float v) {
     void** vt = *reinterpret_cast<void***>(p);
     reinterpret_cast<PFN_SetFloat>(vt[g_floatSlot])(p, n, v);
+}
+void setInt(void* p, const char* n, int v) {
+    void** vt = *reinterpret_cast<void***>(p);
+    reinterpret_cast<PFN_SetInt>(vt[g_intSlot])(p, n, v);
 }
 void setResource(void* p, const char* n, ID3D12Resource* r) {
     void** vt = *reinterpret_cast<void***>(p);
@@ -77,6 +84,14 @@ __declspec(dllexport) void fwd_set_slots(int uintSlot, int floatSlot) {
     if (floatSlot >= 0 && floatSlot < 8) g_floatSlot = floatSlot;
 }
 
+// Optional extension: keep fwd_set_slots and the shared POD ABI unchanged.
+// The host round-trips the int setter before configuring it. Old hosts retain
+// their old setter path; a new host explicitly reports discovery failure as -1.
+__declspec(dllexport) void fwd_set_int_slot(int intSlot) {
+    g_intSlot = (intSlot == 3 || intSlot == 4) ? intSlot : -1;
+    g_intSlotConfigured = true;
+}
+
 // Create a Neural Rendering feature by driving the snippet's own Init_Ext + CreateFeature, from this
 // (accepted) module. capabilityParams is the driver core's capability block.
 __declspec(dllexport) void* fwd_create(const wchar_t* snippetPath, const wchar_t* dataPath,
@@ -85,6 +100,11 @@ __declspec(dllexport) void* fwd_create(const wchar_t* snippetPath, const wchar_t
                                        unsigned int outWidth, unsigned int outHeight,
                                        const NrModelParams* mp) {
     if (!load(snippetPath) || !caps || !mp) return nullptr;
+    if (g_intSlotConfigured && g_intSlot < 0 && mp->preset != 0) {
+        // Do not silently turn an explicit 310.9 A/B selection into automatic.
+        fwd_last_create = 0;
+        return nullptr;
+    }
     if (!g.initialised && g.init) {
         // Generic application id; SDK version 0x15 (21).
         fwd_last_init = g.init(0x24480451ull, dataPath, device, 0x0000015, caps);
@@ -104,7 +124,10 @@ __declspec(dllexport) void* fwd_create(const wchar_t* snippetPath, const wchar_t
     setUInt(caps, "DLSSNR.Enabled", 1);
     setUInt(caps, "DLSSNR.Width", width);
     setUInt(caps, "DLSSNR.Height", height);
-    setUInt(caps, "DLSSNR.Hint.Render.Preset", mp->preset);
+    if (g_intSlot >= 0)
+        setInt(caps, "DLSSNR.Hint.Render.Preset", static_cast<int>(mp->preset));
+    else
+        setUInt(caps, "DLSSNR.Hint.Render.Preset", mp->preset); // legacy host/default
     setFloat(caps, "DLSSNR.Intensity", mp->intensity);
     setUInt(caps, "DLSSNR.Style", mp->style);
     setFloat(caps, "DLSSNR.LocalStructureStrength", mp->localStructure);

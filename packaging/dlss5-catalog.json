@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "release": "310.9.16.0",
+  "reviewed_at": "2026-10-27",
+  "source": "https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16",
+  "runtimes": {
+    "sf": {
+      "file": "nvngx_dlssnr_310.9.16.zip",
+      "url": "https://github.com/RankFTW/rhi-repo/releases/download/dlssnr-310.9.16/nvngx_dlssnr_310.9.16.zip",
+      "api_url": "https://api.github.com/repos/RankFTW/rhi-repo/releases/assets/678225606",
+      "artifact_sha256": "dbeb1f2790b5c621887db99b1a56ac8bd5cb35207e8c074cbb806710f7460cab",
+      "artifact_bytes": 192378839,
+      "format": "zip",
+      "dll_sha256": "cdfa6c1ec784867182164c7836f324f087b5c9f374d0c9fe46f54999feabf3ed",
+      "dll_bytes": 276162560,
+      "version": "310.9.16.0",
+      "source": "https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16",
+      "identity_source": "https://github.com/JungleHam/GTAIV-DLAA-DLSS4.5-DLSS5-FSR/blob/main/manifests/nr-versions.json",
+      "kind": "community-compatibility",
+      "signed_original": false,
+      "default_nr_preset": 2,
+      "architecture": "native",
+      "profiles": ["rtx30", "rtx40"],
+      "note": "Community D3D12 compatibility build; preserve real GPU architecture. Hash matching does not imply vendor support or successful rendering."
+    },
+    "nvidia": {
+      "file": "nvngx_dlssnr_nvidia_310.9.16.dll",
+      "url": "https://github.com/LoreanXavier/pt-dlss5-runtime/releases/download/dlssnr-310.9.16/nvngx_dlssnr.dll",
+      "api_url": "https://api.github.com/repos/LoreanXavier/pt-dlss5-runtime/releases/assets/650853546",
+      "artifact_sha256": "2bc19bc09a7b89dd44f73e2ac0108fcc586e2154bdd0830f242f4f040e28789f",
+      "artifact_bytes": 266424944,
+      "format": "dll",
+      "dll_sha256": "2bc19bc09a7b89dd44f73e2ac0108fcc586e2154bdd0830f242f4f040e28789f",
+      "dll_bytes": 266424944,
+      "version": "310.9.16.0",
+      "source": "https://github.com/NVIDIAGameWorks/rtx-remix/releases/tag/remix-1.6.1",
+      "identity_source": "https://github.com/NVIDIAGameWorks/rtx-remix/releases/download/remix-1.6.1/rtx-remix-for-x64-games-release-remix-1.6.1-crc.txt",
+      "kind": "nvidia-original",
+      "signed_original": true,
+      "default_nr_preset": 2,
+      "architecture": "native",
+      "profiles": ["rtx50"],
+      "note": "Unmodified NVIDIA x64 DLL obtained from a mirror, pinned to the official RTX Remix file hash. Driver compatibility is not established by this static identity check."
+    }
+  },
+  "profiles": {"rtx30": "sf", "rtx40": "sf", "rtx50": "nvidia"},
+  "preset_source": "https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_ngx_wrapper.cpp",
+  "note": "Preset B (I32 value 2) selects the lighter NR network; it is independent of the Default/Natural/Cinematic appearance style. No GPU execution or performance testing was performed for this update."
+}

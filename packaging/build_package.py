@@ -42,8 +42,22 @@ for file in (ROOT / "app").glob("*.py"):
         shutil.copy2(file, app / file.name)
 for name in ("dlss5-components.json", "requirements-installed.txt"):
     shutil.copy2(ROOT / "app" / name, app / name)
-for name in ("out", "web"):
-    shutil.copytree(ROOT / "app" / name, app / name, ignore=ignore)
+shutil.copytree(ROOT / "app/web", app / "web", ignore=ignore)
+# Ship only the runtimes selected by this build. Local component history and
+# superseded DLLs stay available for rollback without inflating every release.
+shutil.copytree(ROOT / "app/out", app / "out",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5"))
+components = json.loads((ROOT / "app/dlss5-components.json").read_text(encoding="utf-8"))
+for relative in sorted({entry["path"] for entry in components["profiles"].values()}):
+    source = (ROOT / "app" / relative).resolve()
+    if not source.is_relative_to((ROOT / "app/out/dlss5").resolve()) or source.name != "nvngx_dlssnr.dll":
+        raise ValueError("Runtime manifest contains an invalid path")
+    entry = next(value for value in components["profiles"].values() if value["path"] == relative)
+    if source.stat().st_size != entry["bytes"] or hashlib.sha256(source.read_bytes()).hexdigest() != entry["sha256"]:
+        raise ValueError("Runtime manifest integrity check failed")
+    target = app / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 for name in ("uploads", "ui_out"):
     (app / name).mkdir()
 (PACKAGE / "logs").mkdir()

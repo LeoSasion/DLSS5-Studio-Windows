@@ -2,7 +2,7 @@
 // Shared POD passed from the host to the forwarder. Same layout both sides.
 // These are the model's own parameters, latched when the NR feature is created.
 struct NrModelParams {
-    unsigned preset;         // DLSSNR.Hint.Render.Preset: 0 Default, 1/2/3 Preset 1..3
+    unsigned preset;         // ABI unchanged; sent as I32. 310.9: 0 Auto, 1 model A, 2 model B.
     float    intensity;      // DLSSNR.Intensity: overall detail strength
     unsigned style;          // DLSSNR.Style: 0 Default, 1 Natural, 2 Cinematic
     float    localStructure; // DLSSNR.LocalStructureStrength

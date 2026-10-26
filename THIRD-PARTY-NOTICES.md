@@ -38,6 +38,17 @@
 
 自动识别 RTX 30 / 40 / 50 系及可识别的同架构专业卡，通过 DXGI 高性能排序选择显卡，使用 CUDA LUID 核对架构，显式传入 DXGI 编号和对应 DLL 目录。每次提交任务前重新识别，避免多卡或热插拔造成编号混淆。运行时三套组件已内置，无需手动替换。未知显卡、缺失或校验失败的组件会显示原因，不会猜测其他架构 DLL。
 
-三套 DLL 来自 [purkatyy/DLSS5- 的 dlss 发布](https://github.com/purkatyy/DLSS5-/releases/tag/dlss)。下载地址、附件及 DLL 的 SHA-256 记录在 `app/dlss5-components.json`；仅提取各包中的 `nvngx_dlssnr.dll`。它们不属于本项目的 MIT 授权范围，原有版权及适用条款继续有效。
+2026-10-27 当前运行库均为 **310.9.16.0**，三套 GPU 配置对应两份不同的 `nvngx_dlssnr.dll`：
 
-已在 RTX PRO 6000 Blackwell 工作站使用 50 系 DLL 实测。30 / 40 系已有型号识别、显卡编号、组件匹配的自动化测试，尚未在实体卡上验证渲染。原发布者也注明 30 / 50 系替换包未经其测试。界面区分“已匹配”和本次启动“已成功渲染”。
+| GPU 配置 | 来源和身份 | 大小与 DLL SHA-256 |
+| --- | --- | --- |
+| RTX 30 / 40 | ShortFuse / OpenNR 社区兼容版，从 [RankFTW/rhi-repo 固定发布](https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16) 取得；未签名，不标为 NVIDIA 签名原版 | 276,162,560 bytes；`CDFA6C1EC784867182164C7836F324F087B5C9F374D0C9FE46F54999FEABF3ED` |
+| RTX 50 | NVIDIA 原版，从 [LoreanXavier 镜像](https://github.com/LoreanXavier/pt-dlss5-runtime/releases/tag/dlssnr-310.9.16) 取得；NVIDIA Authenticode 签名有效，文件 SHA-256 与 [RTX Remix 1.6.1 官方 CRC 清单](https://github.com/NVIDIAGameWorks/rtx-remix/releases/download/remix-1.6.1/rtx-remix-for-x64-games-release-remix-1.6.1-crc.txt) 完全一致 | 266,424,944 bytes；`2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F` |
+
+固定下载地址、GitHub 资产 API、附件大小、附件 SHA-256 与 DLL SHA-256 见 `packaging/dlss5-catalog.json`；实际运行选择及文件身份记录在 `app/dlss5-components.json`。构建下载工具按该目录校验 HTTPS 下载与目标 DLL，并在全部配置就绪后原子切换，保留原文件和回退记录。上述文件不属于本项目的 MIT 授权范围；NVIDIA 软件及其社区兼容修改仍受各自原有版权和适用条款约束。固定哈希与有效签名不扩大 NVIDIA 官方硬件支持，也不代表已获得额外分发权利。
+
+新默认网络选择为 `DLSSNR.Hint.Render.Preset` 的 I32 值 2（Preset B），与既有默认 / 自然 / 电影外观模型独立，不增加界面选项。采用依据为 [NVIDIA RTX Remix 的 NR 创建逻辑](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_ngx_wrapper.cpp)。本次完成文件身份核对与引擎、转发 DLL 编译，按更新要求未运行测试、GPU 处理或性能测量，兼容性和效果待人工反馈。
+
+2026-10-26 在 RTX PRO 6000 Blackwell、591.86 驱动上的处理验证及 RTX 30 / 40 型号识别、编号、组件匹配测试属于旧 310.8 运行库历史，不能用于证明新版通过。本机系统驱动未变更；310.9.16.0 能否在 591.86 运行尚未确认，可能需要更高驱动。NVIDIA 初版产品 616.64 和 RTX Remix 产品 616.92 的基线不作为该 DLL 精确最低驱动要求。
+
+旧发布包及制作工作区中的旧 310.8 文件、回退记录保留；新 `DLSS-Studio-Runtime-20261027-Windows-x64.zip` 为减少体积仅包含当前两份 NR DLL，不附带旧 DLL 或历史备份。应用增量机制不替换模型，本次不提供模型增量包。界面继续区分“已匹配”和本次实际“已成功渲染”。
