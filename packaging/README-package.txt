@@ -1,8 +1,8 @@
 DLSS Studio v1.3.0 — Windows x64
 发布日期：2026-10-27。
-发布页：https://github.com/LeoSasion/DLSS-Studio-Windows/releases/tag/v1.3.0
+发布页：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.3.0
 完整包：DLSS-Studio-Windows-x64.zip
-下载：https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip
+下载：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip
 ZIP SHA-256：见附件校验文件 DLSS-Studio-Windows-x64.zip.sha256。
 本版包含本地处理优化、310.9.16.0运行库和发布审查修复；本次未运行测试、GPU处理或性能测量，等待人工反馈。NR更新不增加界面选项；没有模型增量包，请使用新的完整包。
 

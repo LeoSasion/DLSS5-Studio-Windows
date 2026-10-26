@@ -2,7 +2,7 @@
 
 面向 Windows 的本地 DLSS 图片与视频增强工作台，提供中文界面、深浅主题和无边框独立窗口。
 
-**[下载 Windows x64 完整包](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)** · [v1.3.0 更新说明](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/tag/v1.3.0) · [SHA-256 校验文件](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)
+**[下载 Windows x64 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)** · [v1.3.0 更新说明](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.3.0) · [SHA-256 校验文件](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)
 
 ## 快速使用
 
@@ -34,8 +34,8 @@ v1.3.0 包含处理、缓存、视频与工作台优化，并将 RTX 30 / 40 / 5
 
 正式完整附件为：
 
-- [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)：包含当前 310.9.16.0 运行库的完整便携环境。
-- [`DLSS-Studio-Windows-x64.zip.sha256`](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)：ZIP SHA-256，见附件校验文件。
+- [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)：包含当前 310.9.16.0 运行库的完整便携环境。
+- [`DLSS-Studio-Windows-x64.zip.sha256`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)：ZIP SHA-256，见附件校验文件。
 
 本次没有模型增量包。旧版应用增量工具不替换模型 DLL，不能用旧应用增量包完成本次升级。GitHub 自动生成的 Source code 压缩包只有源码，不含可直接运行的完整环境。
 
