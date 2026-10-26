@@ -10,13 +10,15 @@ app/.venv/Scripts/python.exe -X utf8 -B packaging/build_engine.py --tests
 
 The build script uses the extracted Microsoft compiler/SDK and NVIDIA import library prepared by `packaging/bootstrap_compiler.py`; it does not require a system Visual Studio installation. Outputs go to `source/out`, without overwriting the application runtime. Keep the forwarder and executable from the same validated build.
 
-## NR model preset typing (2026-10-27)
+## Typed parameter ABI and NR model preset (2026-10-27)
 
 The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight model B; 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
 
-NR creation writes `DLSSNR.Hint.Render.Preset` as an I32. The driver-core capability block has a separately negotiated signed setter: the host only considers its known 32-bit integer slots 3/4 after identifying UInt and float, excludes those identified slots and the ULL slot, and round-trips a positive integer with GetI. It does not scan possible float/double/resource/pointer setters. An unknown layout is not guessed: the legacy automatic preset can retain its old UInt route, while an explicit preset fails if the new host cannot establish an I32 setter.
+NR creation writes `DLSSNR.Hint.Render.Preset` as an I32. All host capability setters use the SDK's typed Parameter_Set APIs, and the forwarder uses the header's typed virtual Set overloads. Image, default video and high-precision video perform a typed I32/UInt32/float round trip before creating NR; a mismatch fails explicitly. There is no vtable scan or guessed fallback.
 
-The forwarder retains the two-argument `fwd_set_slots` export and the `NrModelParams` POD layout. The optional `fwd_set_int_slot(int)` extension configures signed dispatch; older hosts keep their previous route. Image, default video and high-precision video configure it through the same loader. The executable and forwarder should be deployed together. This source change does not rewrite GPU architecture, alter model binaries or promise compatibility with a new runtime/driver; no rendering or tests were run for this typing-only patch.
+MSVC 19.44.35229 compilation of a small nonexecuted wrapper and disassembly of the pinned `nvsdk_ngx_d.lib` independently agree: float dispatch is at byte offset 48, UInt32 at 32, I32 at 24, D3D12-resource pointer at 8, void pointer at 0, and ULL at 56. MSVC places the overloaded Set group in reverse declaration order; the earlier claim that the core did not match the SDK came from treating textual header order as vtable order. The previous purported UInt slot 3 was I32, and the previous resource slot 0 was the void-pointer overload, not ULL. The implementation now leaves dispatch to those typed interfaces rather than copying these offsets into production code. Static evidence is in `packaging/build/native-abi-20261027/parameter_dispatch.asm` and `ngx-library-disassembly.txt` in the task workspace.
+
+The forwarder retains `fwd_set_slots(int,int)`, `fwd_set_int_slot(int)` and the `NrModelParams` POD layout for old hosts; the two slot exports are compatibility no-ops. Deploy the executable and forwarder together. This source change does not rewrite GPU architecture, alter model binaries or promise compatibility with a new runtime/driver. Only static compilation/disassembly was performed for this ABI correction; no generated wrapper, rendering, GPU or tests were executed.
 
 ## Video pixels and color
 

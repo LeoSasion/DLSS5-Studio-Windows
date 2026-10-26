@@ -64,9 +64,8 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     void* feature=nullptr;
     if(!replay){
         if(!caps)throw ToolError("no capability parameters from NGX");
-        DiscoverFloatSlot(caps);DiscoverUIntSlot(caps);
+        ValidateCapabilityParams(caps);
         if(!fwd.Load())throw ToolError("could not load forwarder nvngx.dll_dlssnr.dll");
-        if(fwd.setSlots)fwd.setSlots(g_uintSlot,g_floatSlot);
         NrFeatureDesc d;d.inputW=nW;d.inputH=nH;d.outputW=nW;d.outputH=nH;d.preset=model.preset;
         NrFeature prime;
         auto* list=gpu.Begin();prime.TryCreate(ngx,list,d);gpu.EndAndWait();prime.Release();

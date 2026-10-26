@@ -704,9 +704,17 @@ def render(jid, s, item, selection):
             if cached:
                 paths = studio_cache.clone_result(cached, folder)
                 stat = Path(paths["result_path"]).stat()
+                timing = {}
+                if item["kind"] == "video":
+                    actual_start = next((value for value in (cached.get("actual_start"),
+                        cached.get("clip_start"), jobs[jid].get("clip_start")) if value is not None), 0)
+                    preview_offset = cached.get("preview_offset")
+                    timing = {"actual_start": actual_start,
+                              "preview_offset": actual_start if preview_offset is None else preview_offset}
+                    studio_cache.clone_timeline(OUTPUTS, cached["id"], jid)
                 update_job(jid, save=True, status="done", phase="done", progress=100, eta=None,
                     message="已复用相同设置的结果。", cache_hit=True, cache_mode="exact", reused_from=cached["id"],
-                    **paths, result_sha256=cached.get("result_sha256") or studio_cache.digest_file(paths["result_path"]),
+                    **paths, **timing, result_sha256=cached.get("result_sha256") or studio_cache.digest_file(paths["result_path"]),
                     result_stat=[stat.st_size, stat.st_mtime_ns], width=cached.get("width"), height=cached.get("height"),
                     output_profile=cached.get("output_profile", {}),
                     finished_at=time.time(), download=f"/api/jobs/{jid}/download",

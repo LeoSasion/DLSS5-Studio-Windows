@@ -39,7 +39,7 @@ internal sealed class StudioService : IDisposable {
     public bool Ready() { var h=Health(Port); return h!=null && h.ContainsKey("instance") && (string)h["instance"]==Identity; }
     public bool Busy() { var h=Health(Port); return h!=null && h.ContainsKey("busy") && (bool)h["busy"]; }
     public void Validate() {
-        foreach(var file in new[]{"runtime/python.exe","runtime/python310.dll","app/serve_local.py","app/studio_server.py","app/web/index.html","app/out/video2dlssnr.exe","app/out/nvngx_dlssnr.dll","app/out/nvngx_dlss.dll","app/out/ffmpeg.exe","app/out/ffprobe.exe"})
+        foreach(var file in new[]{"runtime/python.exe","runtime/python310.dll","app/serve_local.py","app/studio_server.py","app/web/index.html","app/dlss5-components.json","app/out/video2dlssnr.exe","app/out/nvngx.dll_dlssnr.dll","app/out/nvngx_dlss.dll","app/out/ffmpeg.exe","app/out/ffprobe.exe"})
             if(!File.Exists(Path.Combine(Root,file))) throw new IOException("缺少文件："+file+"。请完整解压 ZIP，勿单独移动 EXE。");
         Directory.CreateDirectory(LogDir);
         var probe=Path.Combine(LogDir,".write-check"); File.WriteAllText(probe,"ok"); File.Delete(probe);

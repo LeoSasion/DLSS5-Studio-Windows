@@ -8,6 +8,7 @@ import bisect
 import json
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 
@@ -167,6 +168,38 @@ def clone_result(job, folder):
             copied[source] = target
         paths[key] = str(copied[source])
     return paths
+
+
+def clone_timeline(root, source_id, target_id):
+    """Give a reused video its own immutable PTS maps, without following links.
+
+    Older results may have no maps. Leave any existing destination untouched
+    unless a complete source map can be committed atomically.
+    """
+    copied = []
+    for name in ("frame-map.json", "timeline.json"):
+        staged = None
+        try:
+            source = owned_path(root, f"{source_id}/work/{name}")
+            if not source.is_file():
+                continue
+            target = owned_path(root, f"{target_id}/work/{name}")
+            if source == target:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staged = owned_path(root, f"{target_id}/work/.{name}.{uuid.uuid4().hex}.tmp")
+            link_or_copy(source, staged)
+            staged.replace(target)
+            copied.append(name)
+        except (OSError, ValueError):
+            continue
+        finally:
+            if staged is not None:
+                try:
+                    staged.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    return copied
 
 
 def valid_result(job):

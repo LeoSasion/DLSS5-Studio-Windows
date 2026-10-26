@@ -40,14 +40,15 @@ app.mkdir()
 for file in (ROOT / "app").glob("*.py"):
     if not file.name.startswith("test_") and not file.name.endswith(".original.py"):
         shutil.copy2(file, app / file.name)
-for name in ("dlss5-components.json", "requirements-installed.txt"):
-    shutil.copy2(ROOT / "app" / name, app / name)
+# One snapshot drives both the staged manifest and its selected runtime payloads.
+components = json.loads((ROOT / "app/dlss5-components.json").read_text(encoding="utf-8"))
+(app / "dlss5-components.json").write_text(json.dumps(components, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+shutil.copy2(ROOT / "app/requirements-installed.txt", app / "requirements-installed.txt")
 shutil.copytree(ROOT / "app/web", app / "web", ignore=ignore)
 # Ship only the runtimes selected by this build. Local component history and
 # superseded DLLs stay available for rollback without inflating every release.
 shutil.copytree(ROOT / "app/out", app / "out",
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5"))
-components = json.loads((ROOT / "app/dlss5-components.json").read_text(encoding="utf-8"))
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5", "nvngx_dlssnr.dll"))
 for relative in sorted({entry["path"] for entry in components["profiles"].values()}):
     source = (ROOT / "app" / relative).resolve()
     if not source.is_relative_to((ROOT / "app/out/dlss5").resolve()) or source.name != "nvngx_dlssnr.dll":

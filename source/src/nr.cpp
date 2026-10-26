@@ -120,97 +120,45 @@ static void SetRes(NVSDK_NGX_Parameter* p, const char* k, GpuTexture* t) {
 }
 
 // ---------------------------------------------------------------------------
-// Driving the driver core's capability block by raw vtable slot.
+// Driving the driver core's capability block through the typed NGX interface.
 //
 // Feature 18 must be created on the CORE's
 // capability parameters (GetCapabilityParameters), not a freshly allocated
 // block - the capability block carries the snippet/preset callbacks a feature
 // needs at create time; a fresh one has none, so CreateFeature answers
-// UnableToInitializeFeature (0xBAD0000B). And that block does not lay its
-// setters out the way the SDK header declares: uint is slot 3, resources go
-// through slot 0 (the ULL setter), and the float setter is not at the header's
-// slot 1 - it is found by round-tripping a value. The typed Get() works, which
-// is what makes probing possible.
+// UnableToInitializeFeature (0xBAD0000B). MSVC emits this overloaded virtual
+// Set group in reverse declaration order. The SDK's typed setters and the
+// header's virtual calls agree; textual declaration order is not a slot map.
+// Never discover an ABI by invoking unknown vtable entries with trial types.
 namespace {
-using PfnSetULL = void(NVSDK_CONV*)(void*, const char*, unsigned long long);
-using PfnSetFloatVt = void(NVSDK_CONV*)(void*, const char*, float);
-using PfnSetUIntVt = void(NVSDK_CONV*)(void*, const char*, unsigned int);
-using PfnSetIntVt = void(NVSDK_CONV*)(void*, const char*, int);
-constexpr int kVtSetULL = 0;
-int g_floatSlot = -1;
-int g_uintSlot = 3;
-int g_intSlot = -1;
-
 void VSetUInt(void* p, const char* n, unsigned v) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PfnSetUIntVt>(vt[g_uintSlot])(p, n, v);
-}
-void DiscoverIntSlot(NVSDK_NGX_Parameter* p) {
-    g_intSlot = -1;
-    // The SDK/core setter layouts place their two 32-bit integer overloads
-    // at 3/4. Only consider that scalar corridor after identifying UInt and
-    // float; never call a possible double, pointer, resource or ULL overload
-    // with an int. An unknown layout stays unsupported rather than guessed.
-    if ((g_uintSlot != 3 && g_uintSlot != 4) ||
-        (g_floatSlot != 1 && g_floatSlot != 6)) return;
-    void** vt = *reinterpret_cast<void***>(p);
-    for (const int slot : {4, 3}) {
-        if (slot == g_uintSlot || slot == g_floatSlot || slot == kVtSetULL) continue;
-        constexpr int probe = 0x1234;
-        int rb = 0;
-        reinterpret_cast<PfnSetIntVt>(vt[slot])(p, "DLSSNR.IProbe", probe);
-        if (NVSDK_NGX_Parameter_GetI(p, "DLSSNR.IProbe", &rb) == NVSDK_NGX_Result_Success &&
-            rb == probe) {
-            g_intSlot = slot;
-            return;
-        }
-    }
+    NVSDK_NGX_Parameter_SetUI(static_cast<NVSDK_NGX_Parameter*>(p), n, v);
 }
 void VSetInt(void* p, const char* n, int v) {
-    if (g_intSlot < 0) {
-        if (v == 0) { VSetUInt(p, n, 0); return; } // legacy automatic preset
-        throw ToolError("NGX capability block has no verified signed-integer setter");
-    }
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PfnSetIntVt>(vt[g_intSlot])(p, n, v);
-}
-void DiscoverUIntSlot(NVSDK_NGX_Parameter* p) {
-    void** vt = *reinterpret_cast<void***>(p);
-    for (int slot = 0; slot < 8; ++slot) {
-        const unsigned probe = 0x1234u;
-        unsigned rb = 0;
-        reinterpret_cast<PfnSetUIntVt>(vt[slot])(p, "DLSSNR.UProbe", probe);
-        if (NVSDK_NGX_Parameter_GetUI(p, "DLSSNR.UProbe", &rb) == NVSDK_NGX_Result_Success &&
-            rb == probe) {
-            g_uintSlot = slot;
-            DiscoverIntSlot(p);
-            return;
-        }
-    }
-    g_intSlot = -1;
+    NVSDK_NGX_Parameter_SetI(static_cast<NVSDK_NGX_Parameter*>(p), n, v);
 }
 void VSetRes(void* p, const char* n, ID3D12Resource* r) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PfnSetULL>(vt[kVtSetULL])(p, n, reinterpret_cast<unsigned long long>(r));
+    NVSDK_NGX_Parameter_SetD3d12Resource(static_cast<NVSDK_NGX_Parameter*>(p), n, r);
 }
 void VSetFloat(void* p, const char* n, float v) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PfnSetFloatVt>(vt[g_floatSlot < 0 ? 1 : g_floatSlot])(p, n, v);
+    NVSDK_NGX_Parameter_SetF(static_cast<NVSDK_NGX_Parameter*>(p), n, v);
 }
-void DiscoverFloatSlot(NVSDK_NGX_Parameter* p) {
-    if (g_floatSlot >= 0) return;
-    void** vt = *reinterpret_cast<void***>(p);
-    for (int slot = 0; slot < 8; ++slot) {
-        const float probe = 0.3125f;  // exact in binary
-        float rb = 0.0f;
-        reinterpret_cast<PfnSetFloatVt>(vt[slot])(p, "DLSSNR.Probe", probe);
-        if (NVSDK_NGX_Parameter_GetF(p, "DLSSNR.Probe", &rb) == NVSDK_NGX_Result_Success &&
-            rb == probe) {
-            g_floatSlot = slot;
-            return;
-        }
-    }
-    g_floatSlot = 1;
+void ValidateCapabilityParams(NVSDK_NGX_Parameter* p) {
+    if (!p) throw ToolError("no capability parameters from NGX");
+    constexpr int signedValue = 0x1234;
+    constexpr unsigned unsignedValue = 0x5678u;
+    constexpr float floatValue = 0.3125f;
+    int signedRead = 0;
+    unsigned unsignedRead = 0;
+    float floatRead = 0;
+    NVSDK_NGX_Parameter_SetI(p, "DLSSNR.TypedI", signedValue);
+    NVSDK_NGX_Parameter_SetUI(p, "DLSSNR.TypedUI", unsignedValue);
+    NVSDK_NGX_Parameter_SetF(p, "DLSSNR.TypedF", floatValue);
+    if (NVSDK_NGX_Parameter_GetI(p, "DLSSNR.TypedI", &signedRead) != NVSDK_NGX_Result_Success ||
+        NVSDK_NGX_Parameter_GetUI(p, "DLSSNR.TypedUI", &unsignedRead) != NVSDK_NGX_Result_Success ||
+        NVSDK_NGX_Parameter_GetF(p, "DLSSNR.TypedF", &floatRead) != NVSDK_NGX_Result_Success ||
+        signedRead != signedValue || unsignedRead != unsignedValue || floatRead != floatValue)
+        throw ToolError("NGX capability parameters do not satisfy the typed SDK interface");
 }
 }  // namespace
 
@@ -433,8 +381,6 @@ int ProbeNeuralRendering(const std::string& dllDir, int adapter, unsigned inputW
     LogInfo("");
     LogInfo("route F - forwarder shim -> snippet's own CreateFeature 18:");
     {
-        using PfnFwdSetSlots = void(*)(int, int);
-        using PfnFwdSetIntSlot = void(*)(int);
         using PfnFwdCreate = void*(*)(const wchar_t*, const wchar_t*, ID3D12Device*,
                                       ID3D12GraphicsCommandList*, void*, unsigned, unsigned,
                                       unsigned, unsigned, const NrModelParams*);
@@ -456,19 +402,13 @@ int ProbeNeuralRendering(const std::string& dllDir, int adapter, unsigned inputW
             LogInfo("    could not load forwarder %s (err %lu)", Widen2Narrow(fwdPath).c_str(),
                     GetLastError());
         } else {
-            auto fSet = reinterpret_cast<PfnFwdSetSlots>(GetProcAddress(fwd, "fwd_set_slots"));
-            auto fSetInt = reinterpret_cast<PfnFwdSetIntSlot>(GetProcAddress(fwd, "fwd_set_int_slot"));
             auto fCreate = reinterpret_cast<PfnFwdCreate>(GetProcAddress(fwd, "fwd_create"));
             auto fEval = reinterpret_cast<PfnFwdEval>(GetProcAddress(fwd, "fwd_evaluate"));
             auto fRel = reinterpret_cast<PfnFwdRelease>(GetProcAddress(fwd, "fwd_release"));
             NVSDK_NGX_Parameter* caps = ngx.CapabilityParams();
             if (fCreate && fEval && caps) {
-                DiscoverFloatSlot(caps);
-                DiscoverUIntSlot(caps);
-                if (fSet) fSet(g_uintSlot, g_floatSlot);
-                if (fSetInt) fSetInt(g_intSlot);
-                LogInfo("    forwarder loaded; vtable slots uint=%d float=%d int=%d", g_uintSlot,
-                        g_floatSlot, g_intSlot);
+                ValidateCapabilityParams(caps);
+                LogInfo("    forwarder loaded; typed SDK capability parameters");
 
                 // Absolute path to the snippet for the forwarder's own LoadLibrary.
                 std::wstring snippetPath = Narrow2Widen(
@@ -527,7 +467,7 @@ int ProbeNeuralRendering(const std::string& dllDir, int adapter, unsigned inputW
     }
 
     // ---- route P: core CreateFeature 18 on the driver's CAPABILITY block -----
-    //      (not a fresh one), setters by raw vtable slot.
+    //      (not a fresh one), setters through the typed SDK interface.
     LogInfo("");
     LogInfo("route P - core CreateFeature 18 on capability params:");
     {
@@ -535,9 +475,8 @@ int ProbeNeuralRendering(const std::string& dllDir, int adapter, unsigned inputW
         if (!caps) {
             LogInfo("    no capability params from the core");
         } else {
-            DiscoverFloatSlot(caps);
-            DiscoverUIntSlot(caps);
-            LogInfo("    vtable slots: uint=%d float=%d", g_uintSlot, g_floatSlot);
+            ValidateCapabilityParams(caps);
+            LogInfo("    capability parameters satisfy the typed SDK interface");
             // verify the uint setter actually lands
             VSetUInt(caps, "Width", inputW);
             unsigned wcheck = 0;
@@ -847,8 +786,6 @@ int ProbeNeuralRendering(const std::string& dllDir, int adapter, unsigned inputW
 namespace {
 struct ForwarderApi {
     HMODULE mod = nullptr;
-    void (*setSlots)(int, int) = nullptr;
-    void (*setIntSlot)(int) = nullptr;
     void* (*create)(const wchar_t*, const wchar_t*, ID3D12Device*, ID3D12GraphicsCommandList*,
                     void*, unsigned, unsigned, unsigned, unsigned, const NrModelParams*) = nullptr;
     int (*evaluate)(ID3D12GraphicsCommandList*, void*, void*, ID3D12Resource*, ID3D12Resource*,
@@ -864,14 +801,9 @@ struct ForwarderApi {
         p = (s == std::wstring::npos ? std::wstring() : p.substr(0, s + 1)) + L"nvngx.dll_dlssnr.dll";
         mod = LoadLibraryExW(p.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!mod) return false;
-        setSlots = reinterpret_cast<decltype(setSlots)>(GetProcAddress(mod, "fwd_set_slots"));
-        setIntSlot = reinterpret_cast<decltype(setIntSlot)>(GetProcAddress(mod, "fwd_set_int_slot"));
         create = reinterpret_cast<decltype(create)>(GetProcAddress(mod, "fwd_create"));
         evaluate = reinterpret_cast<decltype(evaluate)>(GetProcAddress(mod, "fwd_evaluate"));
         release = reinterpret_cast<decltype(release)>(GetProcAddress(mod, "fwd_release"));
-        // All production callers discover the capability setters before Load.
-        // Central configuration also covers the high-precision video path.
-        if (setIntSlot) setIntSlot(g_intSlot);
         return create && evaluate;
     }
 };
@@ -1221,15 +1153,13 @@ int RunNeuralRendering(const std::string& dllDir, int adapter, const std::string
         LogErr("no capability parameters from the core");
         return 1;
     }
-    DiscoverFloatSlot(caps);
-    DiscoverUIntSlot(caps);
+    ValidateCapabilityParams(caps);
 
     ForwarderApi fwd;
     if (!fwd.Load()) {
         LogErr("could not load forwarder nvngx.dll_dlssnr.dll (err %lu)", GetLastError());
         return 1;
     }
-    if (fwd.setSlots) fwd.setSlots(g_uintSlot, g_floatSlot);
 
     const std::string snippetNarrow =
         dllDir.empty() ? std::string("nvngx_dlssnr.dll") : dllDir + "/nvngx_dlssnr.dll";
@@ -1549,15 +1479,13 @@ static int RunNeuralRenderingVideoLegacy(const std::string& dllDir, int adapter,
         LogErr("no capability parameters from the core");
         return 1;
     }
-    DiscoverFloatSlot(caps);
-    DiscoverUIntSlot(caps);
+    ValidateCapabilityParams(caps);
 
     ForwarderApi fwd;
     if (!fwd.Load()) {
         LogErr("could not load forwarder nvngx.dll_dlssnr.dll (err %lu)", GetLastError());
         return 1;
     }
-    if (fwd.setSlots) fwd.setSlots(g_uintSlot, g_floatSlot);
 
     std::string snippetNarrow =
         dllDir.empty() ? std::string("nvngx_dlssnr.dll") : dllDir + "/nvngx_dlssnr.dll";

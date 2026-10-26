@@ -47,8 +47,8 @@
 
 固定下载地址、GitHub 资产 API、附件大小、附件 SHA-256 与 DLL SHA-256 见 `packaging/dlss5-catalog.json`；实际运行选择及文件身份记录在 `app/dlss5-components.json`。构建下载工具按该目录校验 HTTPS 下载与目标 DLL，并在全部配置就绪后原子切换，保留原文件和回退记录。上述文件不属于本项目的 MIT 授权范围；NVIDIA 软件及其社区兼容修改仍受各自原有版权和适用条款约束。固定哈希与有效签名不扩大 NVIDIA 官方硬件支持，也不代表已获得额外分发权利。
 
-新默认网络选择为 `DLSSNR.Hint.Render.Preset` 的 I32 值 2（Preset B），与既有默认 / 自然 / 电影外观模型独立，不增加界面选项。采用依据为 [NVIDIA RTX Remix 的 NR 创建逻辑](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_ngx_wrapper.cpp)。本次完成文件身份核对与引擎、转发 DLL 编译，按更新要求未运行测试、GPU 处理或性能测量，兼容性和效果待人工反馈。
+新默认网络选择为 `DLSSNR.Hint.Render.Preset` 的 I32 值 2（Preset B），与既有默认 / 自然 / 电影外观模型独立，运行库更新不增加界面选项。采用依据为 [NVIDIA RTX Remix 的 NR 创建逻辑](https://github.com/NVIDIAGameWorks/dxvk-remix/blob/bbd74a1287c2fa887f4a2b0e46a1530177890b64/src/dxvk/rtx_render/rtx_ngx_wrapper.cpp)。原生参数调用使用 SDK 正式类型，替换对虚函数表的猜测；同编译器汇编与 SDK 静态库反汇编用于静态接口核对。本次完成文件身份核对、静态审查与引擎、转发 DLL 编译，按更新要求未运行测试、GPU 处理或性能测量，兼容性和效果待人工反馈。静态证据不作 GPU 运行成功或稳定性承诺。
 
 2026-10-26 在 RTX PRO 6000 Blackwell、591.86 驱动上的处理验证及 RTX 30 / 40 型号识别、编号、组件匹配测试属于旧 310.8 运行库历史，不能用于证明新版通过。本机系统驱动未变更；310.9.16.0 能否在 591.86 运行尚未确认，可能需要更高驱动。NVIDIA 初版产品 616.64 和 RTX Remix 产品 616.92 的基线不作为该 DLL 精确最低驱动要求。
 
-旧发布包及制作工作区中的旧 310.8 文件、回退记录保留；新 `DLSS-Studio-Runtime-20261027-Windows-x64.zip` 为减少体积仅包含当前两份 NR DLL，不附带旧 DLL 或历史备份。应用增量机制不替换模型，本次不提供模型增量包。界面继续区分“已匹配”和本次实际“已成功渲染”。
+旧发布包及制作工作区中的旧 310.8 文件、回退记录保留；[v1.3.0 完整包](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/tag/v1.3.0) `DLSS-Studio-Windows-x64.zip` 仅包含当前两份 NR DLL，根目录旧备用 DLL 和历史备份不进入发行包。启动器按组件清单与转发 DLL 检查环境，构建采用单次已核对的组件清单快照。应用增量机制不替换模型，本次不提供模型增量包。界面继续区分“已匹配”和本次实际“已成功渲染”。

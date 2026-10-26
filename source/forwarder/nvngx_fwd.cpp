@@ -6,43 +6,30 @@
 // that test. This DLL exists only to be named "nvngx.dll_dlssnr.dll", so calls into the snippet
 // originate from a module the snippet accepts. It contains no NVIDIA code.
 //
-// The parameter block passed in is the driver core's capability block; its setters are driven by
-// raw vtable slot because the core exports no Set/Get helpers and its block does not match the SDK
-// header's layout (uint=3, resources via the ULL setter at 0, float probed on this driver).
+// The parameter block passed in is the driver core's capability block. Typed virtual Set calls
+// use the same MSVC ABI as the SDK helpers; overloaded virtual functions are not laid out in
+// their textual declaration order. No raw slot discovery or fallback is needed.
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d12.h>
+#include "nvsdk_ngx_params.h"
 
 #include "nr_params.h"
 
 namespace {
 
-using PFN_SetULL = void(__thiscall*)(void*, const char*, unsigned long long);
-using PFN_SetFloat = void(__thiscall*)(void*, const char*, float);
-using PFN_SetUInt = void(__thiscall*)(void*, const char*, unsigned int);
-using PFN_SetInt = void(__thiscall*)(void*, const char*, int);
-
-int g_uintSlot = 3;
-int g_floatSlot = 6;  // host confirms via probe; 6 on driver 616.56
-int g_intSlot = -1;
-bool g_intSlotConfigured = false;
-
 void setUInt(void* p, const char* n, unsigned int v) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PFN_SetUInt>(vt[g_uintSlot])(p, n, v);
+    static_cast<NVSDK_NGX_Parameter*>(p)->Set(n, v);
 }
 void setFloat(void* p, const char* n, float v) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PFN_SetFloat>(vt[g_floatSlot])(p, n, v);
+    static_cast<NVSDK_NGX_Parameter*>(p)->Set(n, v);
 }
 void setInt(void* p, const char* n, int v) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PFN_SetInt>(vt[g_intSlot])(p, n, v);
+    static_cast<NVSDK_NGX_Parameter*>(p)->Set(n, v);
 }
 void setResource(void* p, const char* n, ID3D12Resource* r) {
-    void** vt = *reinterpret_cast<void***>(p);
-    reinterpret_cast<PFN_SetULL>(vt[0])(p, n, reinterpret_cast<unsigned long long>(r));
+    static_cast<NVSDK_NGX_Parameter*>(p)->Set(n, r);
 }
 
 using PFN_NrInitExt = int(__cdecl*)(unsigned long long, const wchar_t*, ID3D12Device*, int,
@@ -80,16 +67,14 @@ __declspec(dllexport) int fwd_last_init = 0;
 __declspec(dllexport) int fwd_last_create = 0;
 
 __declspec(dllexport) void fwd_set_slots(int uintSlot, int floatSlot) {
-    if (uintSlot >= 0 && uintSlot < 8) g_uintSlot = uintSlot;
-    if (floatSlot >= 0 && floatSlot < 8) g_floatSlot = floatSlot;
+    // Legacy ABI: old hosts may still call this; the typed interface owns dispatch.
+    (void) uintSlot;
+    (void) floatSlot;
 }
 
-// Optional extension: keep fwd_set_slots and the shared POD ABI unchanged.
-// The host round-trips the int setter before configuring it. Old hosts retain
-// their old setter path; a new host explicitly reports discovery failure as -1.
+// Retain the previously published extension without accepting guessed offsets.
 __declspec(dllexport) void fwd_set_int_slot(int intSlot) {
-    g_intSlot = (intSlot == 3 || intSlot == 4) ? intSlot : -1;
-    g_intSlotConfigured = true;
+    (void) intSlot;
 }
 
 // Create a Neural Rendering feature by driving the snippet's own Init_Ext + CreateFeature, from this
@@ -100,11 +85,6 @@ __declspec(dllexport) void* fwd_create(const wchar_t* snippetPath, const wchar_t
                                        unsigned int outWidth, unsigned int outHeight,
                                        const NrModelParams* mp) {
     if (!load(snippetPath) || !caps || !mp) return nullptr;
-    if (g_intSlotConfigured && g_intSlot < 0 && mp->preset != 0) {
-        // Do not silently turn an explicit 310.9 A/B selection into automatic.
-        fwd_last_create = 0;
-        return nullptr;
-    }
     if (!g.initialised && g.init) {
         // Generic application id; SDK version 0x15 (21).
         fwd_last_init = g.init(0x24480451ull, dataPath, device, 0x0000015, caps);
@@ -124,10 +104,7 @@ __declspec(dllexport) void* fwd_create(const wchar_t* snippetPath, const wchar_t
     setUInt(caps, "DLSSNR.Enabled", 1);
     setUInt(caps, "DLSSNR.Width", width);
     setUInt(caps, "DLSSNR.Height", height);
-    if (g_intSlot >= 0)
-        setInt(caps, "DLSSNR.Hint.Render.Preset", static_cast<int>(mp->preset));
-    else
-        setUInt(caps, "DLSSNR.Hint.Render.Preset", mp->preset); // legacy host/default
+    setInt(caps, "DLSSNR.Hint.Render.Preset", static_cast<int>(mp->preset));
     setFloat(caps, "DLSSNR.Intensity", mp->intensity);
     setUInt(caps, "DLSSNR.Style", mp->style);
     setFloat(caps, "DLSSNR.LocalStructureStrength", mp->localStructure);

@@ -1,12 +1,18 @@
-# DLSS-Studio-Windows
+# DLSS Studio v1.3.0
 
 面向 Windows 的本地 DLSS 图片与视频增强工作台，提供中文界面、深浅主题和无边框独立窗口。
 
-> 2026-10-27 运行库更新对应当前源码和本地待发布包 `DLSS-Studio-Runtime-20261027-Windows-x64.zip`，尚未上传 GitHub Release。历史 [v1.2.0](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/tag/v1.2.0) 附件不包含本次更新。
->
-> 本项目原创部分采用 MIT 许可。引擎来源代码与 NVIDIA、FFmpeg 等第三方组件保留各自适用条款，详见 [许可说明](THIRD-PARTY-NOTICES.md) 和 [引擎 MIT 许可](source/THIRD-PARTY-engine-LICENSE.txt)。这不是 NVIDIA 官方项目。
+**[下载 Windows x64 完整包](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)** · [v1.3.0 更新说明](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/tag/v1.3.0) · [SHA-256 校验文件](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)
 
-本次将 RTX 30 / 40 / 50 的 NR 运行库更新至 **310.9.16.0**，默认使用较轻量的网络 **Preset B（I32 值 2）**；既有默认 / 自然 / 电影外观风格保持原含义，不增加 UI。更新仅完成文件身份核对及引擎、转发 DLL 编译，按要求未运行测试或 GPU 处理，画质、性能和兼容性等待人工反馈。下文 2026-10-26 的验证均属旧 310.8 运行库历史。
+## 快速使用
+
+1. 下载 `DLSS-Studio-Windows-x64.zip`，完整解压到可写文件夹；请保留整个目录，不要直接在 ZIP 中运行。
+2. 双击 `DLSS Studio.exe`。Python、依赖、FFmpeg 和处理引擎已内置，无需另装 Python。
+3. 上传图片或视频，选择尺寸、风格和强度，点击“开始处理”；在预览中比较并下载结果。
+
+需要 Windows 10/11 x64、兼容的 NVIDIA 显卡与驱动。独立窗口使用 Microsoft WebView2，缺少时可通过包内微软引导组件联网安装。从旧版升级请解压到新目录并保留旧包。
+
+v1.3.0 包含处理、缓存、视频与工作台优化，并将 RTX 30 / 40 / 50 的 NR 运行库更新至 **310.9.16.0**。本次新版完成文件身份核对、静态审查和编译，**未运行测试、GPU 处理或性能测量**，效果与驱动兼容性等待人工反馈。2026-10-26 的验证仅属旧 310.8 运行库历史，不是新版稳定性承诺。
 
 ## 当前功能
 
@@ -26,11 +32,12 @@
 
 ## 获取与运行
 
-本地待发布完整包为：
+正式完整附件为：
 
-- `DLSS-Studio-Runtime-20261027-Windows-x64.zip`：包含当前 310.9.16.0 运行库的完整便携环境。
+- [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip)：包含当前 310.9.16.0 运行库的完整便携环境。
+- [`DLSS-Studio-Windows-x64.zip.sha256`](https://github.com/LeoSasion/DLSS-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip.sha256)：ZIP SHA-256，见附件校验文件。
 
-本次没有模型增量包。旧版应用增量工具不替换模型 DLL，不能用旧应用增量包完成本次升级。新包尚未出现在历史 Release 附件中；GitHub 自动生成的 Source code 压缩包只有源码，不含可直接运行的完整环境。
+本次没有模型增量包。旧版应用增量工具不替换模型 DLL，不能用旧应用增量包完成本次升级。GitHub 自动生成的 Source code 压缩包只有源码，不含可直接运行的完整环境。
 
 将完整包解压到可写目录，双击 `DLSS Studio.exe`。Python 与依赖已内置；独立窗口需要 Microsoft WebView2，缺少时可选择通过微软引导组件联网安装。不要在 ZIP 内直接运行或单独移动 EXE。
 
@@ -46,6 +53,8 @@
 | RTX 50 | NVIDIA 原版，310.9.16.0，266,424,944 bytes，NVIDIA Authenticode 签名有效；SHA-256 `2BC19BC09A7B89DD44F73E2AC0108FCC586E2154BDD0830F242F4F040E28789F` |
 
 RTX 50 文件从 [LoreanXavier 镜像](https://github.com/LoreanXavier/pt-dlss5-runtime/releases/tag/dlssnr-310.9.16) 取得，与 [NVIDIA RTX Remix 1.6.1 官方 CRC](https://github.com/NVIDIAGameWorks/rtx-remix/releases/download/remix-1.6.1/rtx-remix-for-x64-games-release-remix-1.6.1-crc.txt) 完全匹配；RTX 30/40 文件来自 [RankFTW 固定发布](https://github.com/RankFTW/rhi-repo/releases/tag/dlssnr-310.9.16)。下载资产、附件与 DLL 的固定哈希见 `packaging/dlss5-catalog.json`，运行身份见 `app/dlss5-components.json`。文件匹配或签名有效只确认身份，不扩大官方支持范围或保证实际渲染成功。
+
+新默认使用较轻量的 NR 网络 **Preset B（I32 值 2）**；它与既有默认 / 自然 / 电影外观风格独立，运行库更新不新增界面选项。
 
 ## 参数、复用与接续
 
@@ -83,9 +92,16 @@ HDR 选支持的 10 bit 编码或高精度母版格式；H.264 导出明确映�
 
 底部状态按钮可查看日志、复制诊断及运行真实连续视频自检。组件“已匹配”与“实际成功渲染”分别记录；自检跳过缓存。模型耗时 0 和命中帧数可核对是否真正免推理，整次任务仍可能需要其他阶段。
 
-本次升级使用新完整包：先关闭旧程序，将新包解压到独立目录，保留旧包。制作工作区保留旧 310.8 文件及组件回退记录；新包为减少体积只带当前两份 NR DLL，不附带旧库或其历史备份。要恢复旧运行库，可使用保留的旧包。
+本次升级使用新完整包：先关闭旧程序，将新包解压到独立目录，保留旧包。制作工作区保留旧 310.8 文件及组件回退记录；新包只带当前两份 NR DLL，根目录旧备用库和历史备份不进入发行包。要恢复旧运行库，可使用保留的旧包。
 
 应用增量机制仍只更新应用、界面、启动器和渲染程序，不覆盖媒体、设置、模型、Python 或 FFmpeg，因此本次不提供模型增量包。`tools/components.py` 仍可列出、本地校验导入与回退已有组件，不联网下载。操作与数据位置见 [包内说明源码](packaging/README-package.txt)；人工使用遇到失败时可提供日志与复制诊断的信息。
+
+## 本次发布审查修复
+
+- 移除发行包中的旧 310.8 根目录备用 DLL；启动器改按组件清单与转发 DLL 检查环境。
+- 打包使用单次已核对的组件清单快照，复制并校验快照中的对应文件，避免并发变更混入不同版本。
+- 视频直接命中完整成片缓存时，继承实际片段起点和帧映射，保留原片与结果的 PTS 对齐信息。
+- 原生 NGX 参数调用改用 SDK 正式类型，替换猜测的虚函数表调用。接口核对依据包括同编译器汇编与 SDK 静态库反汇编；这些静态证据及编译成功不等于 GPU 运行验证。
 
 ## 源码与构建
 
@@ -109,15 +125,15 @@ Copy-Item source/out/nvngx.dll_dlssnr.dll app/out/nvngx.dll_dlssnr.dll
 准备好依赖与 `app/out/` 后，可构建到新暂存目录并归档：
 
 ```powershell
-.\app\.venv\Scripts\python.exe -X utf8 -B packaging/build_package.py --package packaging/build/DLSS-Studio-Runtime-20261027
-.\app\.venv\Scripts\python.exe -X utf8 -B packaging/archive_package.py --package packaging/build/DLSS-Studio-Runtime-20261027 --output outputs/DLSS-Studio-Runtime-20261027-Windows-x64.zip
+.\app\.venv\Scripts\python.exe -X utf8 -B packaging/build_package.py --package packaging/build/DLSS-Studio-v1.3.0
+.\app\.venv\Scripts\python.exe -X utf8 -B packaging/archive_package.py --package packaging/build/DLSS-Studio-v1.3.0 --output outputs/releases/v1.3.0/DLSS-Studio-Windows-x64.zip
 ```
 
 构建脚本拒绝覆盖非空暂存目录；已有目录请换新路径。打包会获取固定 WebView2 SDK 并验证微软引导安装器签名。上述命令是构建说明，不代表本次运行库已通过运行测试。历史测试媒体与大型验证输出不进入发行 ZIP。
 
 ## 历史验证与本次限制
 
-2026-10-27 的 310.9.16.0 更新完成了文件身份核对与新引擎、转发 DLL 编译，**未运行自动化测试、GPU 测试、性能测试或新版完整包运行验证**。本次效果和硬件兼容性等待人工反馈。
+2026-10-27 的运行库更新及发布审查完成了文件身份核对、源码静态审查与新引擎、转发 DLL 编译，**未运行自动化测试、GPU 测试、性能测试或新版完整包运行验证**。本次效果和硬件兼容性等待人工反馈，不承诺新版已经过稳定性验证。
 
 以下为 **2026-10-26 旧 310.8 运行库**的历史验证，不能作为 310.9.16.0 通过的依据：源码回归 90 项 Python、9 项 Node 通过；原生套件 31 项、0 跳过、4695 断言通过，独立后处理数学测试 26658 断言通过。另行完成 SDR8/16、PQ/HLG、P3-D65、缓存免推理重合成、PTS/媒体封装、真实 192 帧暂停重开接续和两轮完整桌面测试。当日完整 ZIP 经中文空格路径独立解压，9087 个载荷文件校验、包内 Python、端口避让、真实图片/视频处理及完整原生桌面工作流通过；历史报告位于 `outputs/optimization-package-verification-20261026.json`。
 
@@ -143,3 +159,5 @@ Copy-Item source/out/nvngx.dll_dlssnr.dll app/out/nvngx.dll_dlssnr.dll
 引擎来源为 [DaniilSokolyuk/video2dlssnr](https://github.com/DaniilSokolyuk/video2dlssnr)，来源及本地修改已明确归属。当前三套配置、两份 310.9.16.0 NR DLL 的来源、字节数和 SHA-256 见 `app/dlss5-components.json` 与 `packaging/dlss5-catalog.json`，适用条款独立于本项目。自动组件匹配不会扩大 NVIDIA 官方支持范围。
 
 第三方组件、Python 依赖、FFmpeg、NVIDIA DLL、WebView2 和图标保留各自条款，不统一套用 MIT。[LICENSE](LICENSE)、[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 和各组件附带许可提供具体范围。
+
+本项目原创部分采用 MIT 许可；[引擎 MIT 许可](source/THIRD-PARTY-engine-LICENSE.txt)及第三方原有归属继续保留。本项目并非 NVIDIA 官方产品。

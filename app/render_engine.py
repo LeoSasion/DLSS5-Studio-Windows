@@ -9,7 +9,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 EXE = os.path.join(ROOT, "out", "video2dlssnr.exe")
 NRV = os.path.join(ROOT, "nr_video.py")
 OUT_DIR = os.path.join(ROOT, "ui_out")
-# nvngx_dlssnr.dll is expected next to video2dlssnr.exe; the tool finds it there on its own.
+# Studio passes the selected, verified NR directory from dlss5-components.json.
+# Standalone engine calls must supply --dll-dir when no root fallback is installed.
 
 STYLES = {"默认": 0, "自然": 1, "电影": 2}
 PRESETS = {"默认": 0, "预设 1": 1, "预设 2": 2, "预设 3": 3}
