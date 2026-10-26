@@ -25,7 +25,7 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     this.onChange=onChange;this.onFrameCleared=onFrameCleared;this.onError=onError;
     this.onSelectionChange=onSelectionChange;this.onViewChange=onViewChange;
     this.view='original';this.frame=null;this.locked=false;this.assetId=null;this.resultUrl=null;
-    this.resultOffset=0;this.resultFailed=false;this.sourceFailed=false;this.wantPlaying=false;this.buffering=false;this.raf=0;
+    this.resultOffset=0;this.resultFailed=false;this.sourceFailed=false;this.sourcePreparing=false;this.displayUrl=null;this.pendingSourceTime=null;this.wantPlaying=false;this.buffering=false;this.raf=0;
     this.result.muted=true;
     this.playButton.addEventListener('click',()=>this.source.paused?this.play():this.pause());
     this.timeline.addEventListener('input',()=>this.seek(Number(this.timeline.value)));
@@ -34,7 +34,7 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     this.muteButton.addEventListener('click',()=>{this.source.muted=!this.source.muted;this.paintTransport()});
     this.slider.addEventListener('input',()=>this.paintView());
     for(const event of ['loadedmetadata','loadeddata','canplay','durationchange']){
-      this.source.addEventListener(event,()=>{this.fit();this.paint();this.resumeBuffered();this.onChange()});
+      this.source.addEventListener(event,()=>{if(event==='loadedmetadata'&&this.pendingSourceTime!==null){const target=this.pendingSourceTime;this.pendingSourceTime=null;this.source.currentTime=Math.max(0,Math.min(target,Math.max(0,this.source.duration-.0001)))}this.fit();this.paint();this.resumeBuffered();this.onChange()});
       this.result.addEventListener(event,()=>{if(this.usingResult()&&this.source.currentTime<this.startTime())this.seek(this.startTime());this.sync(this.source.paused);this.paint();this.resumeBuffered();this.onChange()});
     }
     this.source.addEventListener('play',()=>{
@@ -57,8 +57,9 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     });
     this.source.addEventListener('error',()=>{
       if(!this.assetId)return;
+      if(this.sourcePreparing)return;
       this.sourceFailed=true;this.pause();this.paint();this.onChange();
-      this.onError('这个视频暂时无法在浏览器中播放，请使用 H.264 MP4 或 WebM 视频。');
+      this.onError(this.sourcePreviewFailed?'原片显示预览暂不可用，仍可处理并下载结果。':'这个视频暂时无法在浏览器中播放，请使用 H.264 MP4 或 WebM 视频。');
     });
     this.result.addEventListener('error',()=>{
       if(!this.resultUrl)return;
@@ -138,19 +139,29 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     this.paintControlsVisibility();
   }
   setSource(asset){
-    if(this.assetId===asset?.id)return;
+    const url=asset?.preview_url||(asset?.preview_status==='preparing'?null:asset?.url)||null;
+    this.sourcePreparing=asset?.preview_status==='preparing';this.sourcePreviewFailed=asset?.preview_status==='failed';
+    if(this.assetId===asset?.id){
+      if(this.displayUrl===url)return;
+      this.pendingSourceTime=this.pendingSourceTime??this.source.currentTime??0;
+      this.pause();this.displayUrl=url;this.sourceFailed=false;
+      if(url)this.source.src=url;else this.source.removeAttribute('src');
+      this.source.load();this.paint();return;
+    }
     this.clearControlsVisibility();
     this.pause();this.assetId=asset?.id||null;this.sourceFailed=false;
     this.sourceLength=Number(asset?.duration)||0;this.fps=Number(asset?.fps)>0?Number(asset.fps):30;
+    this.displayUrl=url;this.pendingSourceTime=null;
     this.selection={start:0,end:null};
     this.clearFrame(false);this.setResult(null);
-    if(asset)this.source.src=asset.url;else this.source.removeAttribute('src');
+    if(url)this.source.src=url;else this.source.removeAttribute('src');
     this.source.load();this.paint();
   }
   setVisible(visible){this.visible=visible;this.stage.hidden=!visible;if(!visible){this.pause();this.loading.hidden=true;this.clearControlsVisibility()}else{this.fit();this.paintView()}}
   setResult(url,offset=0,isClip=false){
     this.resultClip=isClip;
     if(this.resultUrl===url&&this.resultOffset===offset)return;
+    this.exactMapping=null;
     this.resultOffset=offset;
     this.result.pause();this.resultUrl=url||null;this.resultFailed=false;
     if(url)this.result.src=url;else this.result.removeAttribute('src');
@@ -235,7 +246,7 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
   canCompare(){return this.frame?this.frameOriginal.complete&&this.frameOriginal.naturalWidth>0&&this.frameResult.complete&&this.frameResult.naturalWidth>0:!!this.resultUrl&&!this.resultFailed&&this.result.readyState>=2&&this.source.readyState>=2}
   usingResult(){return !this.frame&&this.view!=='original'&&!!this.resultUrl&&!this.resultFailed}
   duration(){
-    let duration=Number.isFinite(this.source.duration)?this.source.duration:0;
+    let duration=this.sourceDuration();
     if(this.usingResult()&&Number.isFinite(this.result.duration))duration=Math.min(duration,this.resultOffset+this.result.duration);
     return duration;
   }
@@ -261,12 +272,14 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     this.pause();this.clearFrame();
     if(this.usingResult()&&(time<this.startTime()||time>this.duration()))this.onViewChange?.('original');
     const duration=this.duration();
-    this.source.currentTime=Math.max(this.startTime(),Math.min(time,Math.max(this.startTime(),duration-.0001)));
+    const target=Math.max(this.startTime(),Math.min(time,Math.max(this.startTime(),duration-.0001)));
+    if(this.source.readyState<1)this.pendingSourceTime=target;else this.source.currentTime=target;
     this.sync(true);this.paintTransport();
   }
   sync(force=false){
     if(!this.usingResult()||this.result.readyState<1){this.result.pause();return}
-    const target=Math.max(0,Math.min(this.source.currentTime-this.resultOffset,Math.max(0,this.result.duration-.0001)));
+    const exact=this.source.paused&&this.exactMapping?.assetId===this.assetId&&this.exactMapping.resultUrl===this.resultUrl&&Math.abs(this.exactMapping.sourceClock-this.source.currentTime)<.002?this.exactMapping.resultTime:null;
+    const target=Math.max(0,Math.min(exact??this.source.currentTime-this.resultOffset,Math.max(0,this.result.duration-.0001)));
     const drift=target-this.result.currentTime;
     if(!this.result.seeking&&(Math.abs(drift)>(force ? .002 : .10)))this.result.currentTime=target;
     this.result.muted=true;
@@ -306,13 +319,13 @@ window.StudioVideoPlayer = class StudioVideoPlayer {
     sourceLabel.hidden=enhanced&&!compare;sourceLabel.textContent=frame?`当前帧 · ${StudioVideoPlayer.formatTime(this.frame.time)}`:'原视频';
     resultLabel.hidden=!enhanced;resultLabel.textContent=frame?'单帧增强':this.resultClip?'片段增强':'增强后';
     let loading='';
-    if(this.assetId&&!this.sourceFailed&&this.source.readyState<2)loading='正在加载视频…';
+    if(this.assetId&&!this.sourceFailed&&this.source.readyState<2&&(!enhanced||!this.resultUrl))loading=this.sourcePreparing?'正在准备 HDR 原片显示预览…':'正在加载视频…';
     else if(this.buffering)loading='正在同步视频…';
     else if(enhanced&&(frame||this.resultUrl)&&!this.canCompare()&&!this.resultFailed)loading='正在加载增强预览…';
     this.loading.textContent=loading;this.loading.hidden=!this.visible||!loading;
   }
   paintTransport(){
-    const duration=this.sourceDuration(),time=Math.min(this.source.currentTime||0,duration),paused=this.source.paused;
+    const duration=this.sourceDuration(),time=Math.min(this.pendingSourceTime??this.source.currentTime??0,duration),paused=this.source.paused;
     const cache=this.transportCache;
     this.timeline.min='0';this.paintSelection();
     if(cache.duration!==duration){this.timeline.max=String(duration);cache.duration=duration}

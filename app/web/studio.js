@@ -1,11 +1,11 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const form = $('#settings-form');
-const state = {mode:'image', asset:null, output:null, framePreview:null, selection:null, jobKind:'full', jobContext:null, view:'original', style:'默认', busy:false, uploading:false, sourceWidth:0,sourceHeight:0, job:null, hardware:null, pendingPayload:null};
+const state = {mode:'image', asset:null, output:null, framePreview:null, selection:null, jobKind:'full', jobContext:null, view:'original', style:'默认', busy:false, uploading:false, sourceWidth:0,sourceHeight:0, job:null, jobRecord:null, hardware:null, pendingPayload:null};
 const sessions = {image:null,video:null};
 let options = {containers:{hevc_nvenc:['mp4','mkv','mov']}};
 let dragDepth=0, pollTimer=0, polling=false;
-const videoFields=new Set(["motion_engine","motion","motion_vis","codec","container","bit_depth","cq","bitrate","bitrate_mode","audio","enc_preset","prores_profile","frames"]);
+const videoFields=new Set(["motion_engine","motion","motion_vis","codec","container","bit_depth","cq","bitrate","bitrate_mode","audio","enc_preset","prores_profile","frames","stability","preserve_media","timing_mode"]);
 const showNotice = (text,error=false) => {$('#notice-text').textContent=text;$('#notice').hidden=false;$('#notice').classList.toggle('error',error)};
 const videoPlayer = new StudioVideoPlayer({onChange:refreshControls,onFrameCleared(){
   state.framePreview=null;
@@ -54,6 +54,7 @@ function refreshControls(){
   $('#start-button').disabled=locked||!state.asset||!state.hardware?.ready||(state.mode==='video'&&!videoPlayer.sourceDuration());
   $('#upload-button').disabled=locked;$('#empty-upload').disabled=locked;
   $$('[data-mode]').forEach(b=>b.disabled=locked);[...form.elements].forEach(e=>e.disabled=locked||e.dataset.codecDisabled==='true'||(state.mode==='image'&&(videoFields.has(e.name)||e.id==='quality')));$('#reset-settings').disabled=locked;
+  form.elements.hdr.closest('label').hidden=state.mode==='video';form.elements.hdr.disabled=locked||state.mode==='video';
   $$('[data-view]').forEach(b=>b.disabled=b.dataset.view!=='original'&&(!output?.preview||state.mode==='video'&&b.dataset.view==='compare'&&!videoPlayer.canCompare()));
   videoPlayer.setLocked(state.uploading||state.busy&&state.jobKind==='frame',locked);
   const download=$('#download'),ready=!!output?.download;
@@ -63,6 +64,7 @@ function refreshControls(){
   $('#job-progress').hidden=!state.busy;$('#cancel-job').hidden=!state.busy;download.hidden=state.busy;$('#cancel-job').disabled=!state.job;previewZoom.fit();
   $('#start-button span').textContent=state.busy?(state.jobKind==='frame'?'正在测试…':'正在处理…'):state.uploading?'正在上传…':'开始处理';
   if(typeof refreshProduct==='function')refreshProduct();
+  window.StudioEnhancements?.refresh();
 }
 function showAsset(){
   const item=state.asset, imageMode=state.mode==='image';
@@ -75,7 +77,7 @@ function showAsset(){
   $('#image-stage').hidden=!imageMode||!item;
   $('.canvas-panel').classList.toggle('video-mode',!imageMode);
   videoPlayer.setVisible(!imageMode&&!!item);
-  if(!imageMode){videoPlayer.setSource(item);videoPlayer.setSelection(state.selection);videoPlayer.setResult(state.output?.preview||null,state.output?.clip_start||0,state.output?.job_kind==='clip');videoPlayer.setFrame(state.framePreview)}
+  if(!imageMode){videoPlayer.setSource(item);videoPlayer.setSelection(state.selection);videoPlayer.setResult(state.output?.preview||null,state.output?.preview_offset??state.output?.actual_start??state.output?.clip_start??0,state.output?.job_kind==='clip');videoPlayer.setFrame(state.framePreview)}
   $('[data-view=original]').textContent=imageMode?'原图':'原视频';
   $('#empty-state').hidden=!!item;
   $('#empty-state h2').textContent=imageMode?'把图片拖到这里':'把视频拖到这里';
@@ -85,6 +87,7 @@ function showAsset(){
   if(state.output?.preview&&imageMode)$('#result-image').src=state.output.preview;
   else $('#result-image').removeAttribute('src');
   view('original');refreshControls();fitStage();previewZoom.reset();
+  window.StudioEnhancements?.settingsChanged();
 }
 
 function switchMode(mode){if(state.busy||state.uploading||state.mode===mode)return;videoPlayer.pause();sessions[state.mode]={asset:state.asset,output:state.output,framePreview:state.framePreview,selection:state.selection};state.mode=mode;const saved=sessions[mode];state.asset=saved?.asset||null;state.output=saved?.output||null;state.framePreview=saved?.framePreview||null;state.selection=saved?.selection||null;$$('[data-mode]').forEach(b=>{b.classList.toggle('active',b.dataset.mode===mode);b.setAttribute('aria-pressed',b.dataset.mode===mode)});$('#video-settings').hidden=mode!=='video';$('#file-input').accept=mode==='image'?'image/png,image/jpeg,image/webp,image/bmp,image/tiff':'.mp4,.mov,.mkv,.webm,.avi,.m4v';$('#notice').hidden=true;$('#job-log').textContent='尚未开始处理。';status(currentOutput()?'处理完成':state.asset?'就绪':'等待素材');showAsset();saveSession()}
@@ -134,9 +137,10 @@ function updateCodec(){
   refreshControls();
 }
 $('#codec').addEventListener('change',updateCodec);$('#quality').addEventListener('change',updateCodec);
-$('#reset-settings').addEventListener('click',()=>{form.reset();state.style='默认';$('#intensity-number').value=100;$$('[data-style]').forEach(b=>{b.classList.toggle('active',b.dataset.style==='默认');b.setAttribute('aria-pressed',b.dataset.style==='默认')});$$('details').forEach(d=>d.open=false);$('#custom-quality').hidden=true;$$('.advanced-range').forEach(div=>div.querySelector('output').textContent=`${Math.round(Number(div.querySelector('input').value)*100)}%`);updateCodec();$('#container').value=options.video_defaults.container;paintRanges();settingsChanged()});
-function settings(){const result={asset_id:state.asset?.id,size:sizeKey(),style:state.style};for(const el of form.elements){if(!el.name||el.dataset.codecDisabled==='true'||(state.mode==='image'&&videoFields.has(el.name)))continue;result[el.name]=el.type==='checkbox'?el.checked:el.type==='number'||el.type==='range'?Number(el.value):el.value}result.size=sizeKey();if(result.bit_depth!==undefined)result.bit_depth=Number(result.bit_depth);if(result.codec?.startsWith('h264_'))result.bit_depth=8;if(state.mode==='video'&&$('#quality').dataset.codecDisabled!=='true'){const quality=$('#quality').value;result.bitrate_mode=quality==='auto'?'auto':'manual';if(quality==='auto'){result.cq=19;result.bitrate=recommendedBitrate()}else if(quality!=='custom'){result.cq=Number(quality);result.bitrate=0}}return result}
+$('#reset-settings').addEventListener('click',()=>{form.reset();form.elements.protect_region.value='[]';state.style='默认';$('#intensity-number').value=100;$$('[data-style]').forEach(b=>{b.classList.toggle('active',b.dataset.style==='默认');b.setAttribute('aria-pressed',b.dataset.style==='默认')});$$('details').forEach(d=>d.open=false);$('#custom-quality').hidden=true;$$('.advanced-range').forEach(div=>div.querySelector('output').textContent=`${Math.round(Number(div.querySelector('input').value)*100)}%`);updateCodec();$('#container').value=options.video_defaults.container;paintRanges();settingsChanged()});
+function settings(){const result={asset_id:state.asset?.id,size:sizeKey(),style:state.style};for(const el of form.elements){if(!el.name||el.dataset.codecDisabled==='true'||(state.mode==='image'&&videoFields.has(el.name))||(state.mode==='video'&&el.name==='hdr'))continue;result[el.name]=el.type==='checkbox'?el.checked:el.type==='number'||el.type==='range'?Number(el.value):el.value}result.size=sizeKey();if(result.bit_depth!==undefined)result.bit_depth=Number(result.bit_depth);result.render_scale=Number(result.render_scale??1);try{result.protect_region=JSON.parse(result.protect_region||'[]')}catch{result.protect_region=[]}if(result.codec?.startsWith('h264_'))result.bit_depth=8;if(state.mode==='video'&&$('#quality').dataset.codecDisabled!=='true'){const quality=$('#quality').value;result.bitrate_mode=quality==='auto'?'auto':'manual';if(quality==='auto'){result.cq=19;result.bitrate=recommendedBitrate()}else if(quality!=='custom'){result.cq=Number(quality);result.bitrate=0}}return result}
 function showProgress(job){
+  state.jobRecord=job;
   const progress=$('#progress-bar');
   if(Number.isFinite(job.progress))progress.value=job.progress;else progress.removeAttribute('value');
   let text=job.message||'准备处理…';
@@ -145,15 +149,20 @@ function showProgress(job){
   $('#cancel-job').textContent=job.status==='cancelling'?'取消中…':'取消任务';
   $('#cancel-job').disabled=!state.job||job.status==='cancelling';
   status(job.phase==='preview'?'正在生成预览':job.status==='cancelling'?'正在取消':Number.isFinite(job.progress)?`正在处理 ${job.progress}%`:'正在处理…','running');
+  if(job.status==='queued')status(job.queue_position?`排队中 · 第 ${job.queue_position} 个`:'排队中','running');
+  if(job.status==='pausing')status('正在保存暂停点…','running');
+  window.StudioEnhancements?.refresh();
 }
 function schedulePoll(id,delay){clearTimeout(pollTimer);pollTimer=setTimeout(()=>poll(id),delay)}
 async function poll(id,attempt=0){
-  if(id!==state.job||polling)return;
+  if(id!==state.job)return;
+  if(polling){schedulePoll(id,150);return}
   polling=true;
   try{
     const job=await apiRequest(`/api/jobs/${id}`,{},8000);if(id!==state.job)return;
     $('#job-log').textContent=job.log||job.message;
-    if(['queued','running','cancelling'].includes(job.status)){
+    state.jobRecord=job;
+    if(['queued','running','pausing','cancelling'].includes(job.status)){
       state.busy=true;refreshControls();showProgress(job);schedulePoll(id,1200);return;
     }
     state.busy=false;state.pendingPayload=null;
@@ -165,13 +174,14 @@ async function poll(id,attempt=0){
       }else{
         state.output=job;paintHardware(job.hardware);status('处理完成','done');
         if(state.mode==='image'&&job.preview)$('#result-image').src=job.preview;
-        if(state.mode==='video')videoPlayer.setResult(job.preview||null,job.clip_start||0,job.job_kind==='clip');
+        if(state.mode==='video')videoPlayer.setResult(job.preview||null,job.preview_offset??job.actual_start??job.clip_start??0,job.job_kind==='clip');
         view(job.preview?'result':'original');
-        showNotice(job.preview?'处理完成，可以切换预览或下载结果。':'处理完成，此格式无法直接预览，请下载结果。');
+        showNotice(job.cache_hit?'已复用相同设置的结果，可以直接查看或下载。':job.stage_cache_hit?'已复用增强阶段，完成合成与导出。':job.preview?'处理完成，可以切换预览或下载结果。':'处理完成，此格式无法直接预览，请下载结果。');
       }
       if(job.storage_warning)showNotice(job.storage_warning,true);
-    }else{status(job.status==='cancelled'?'已取消':'处理失败',job.status==='cancelled'?'':'error');showNotice(job.message,job.status!=='cancelled')}
-    refreshControls();saveSession();
+    }else if(job.status==='paused'){status('已暂停');showNotice('已保存处理进度，可以继续；关闭程序后也会保留。')}
+    else{status(job.status==='cancelled'?'已取消':'处理失败',job.status==='cancelled'?'':'error');showNotice(job.message,job.status!=='cancelled')}
+    refreshControls();saveSession();window.StudioEnhancements?.lookup();
   }catch(error){
     if(id!==state.job)return;
     if(error.status===404){state.busy=false;status('任务已失效','error');showNotice(error.message,true);refreshControls();saveSession();return}
@@ -213,7 +223,7 @@ $('#start-button').addEventListener('click',async()=>{
   view('original');refreshControls();$('#notice').hidden=true;showProgress({message:'准备处理…'});
   try{await submitJob(payload)}catch(e){state.busy=false;showNotice(e.message,true);status('无法开始','error');refreshControls();saveSession()}
 });
-const frameFields=['size','style','intensity','local_structure','local_tone','skin','global_tone','detail','color','ui_correction','auto_mask','hdr'];
+const frameFields=['size','style','intensity','local_structure','local_tone','skin','global_tone','detail','color','ui_correction','auto_mask','hdr','protect_region','protect_skin','protect_highlights','render_scale'];
 // Retained for legacy frame-history validation; the workspace exports timeline selections.
 async function renderFrame(){
   if(state.mode!=='video'||!state.asset||state.busy||state.uploading||!state.hardware?.ready)return;

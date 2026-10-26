@@ -55,6 +55,9 @@ class GpuTests(unittest.TestCase):
             self.assertEqual(runtime.public()['status'],'matched')
             runtime.mark_verified(selected)
             self.assertEqual(runtime.public()['status'],'verified')
+            self.assertFalse(runtime.public()['capabilities']['continuous_validation'])
+            runtime.mark_continuous_verified(selected)
+            self.assertTrue(runtime.public()['capabilities']['continuous_validation'])
             adapters[:]=[card('RTX 5090',1,luid='blackwell')]
             self.assertEqual(runtime.prepare().profile,'rtx50')
             self.assertEqual(runtime.public()['status'],'matched')

@@ -6,10 +6,13 @@ import shutil
 import subprocess
 import urllib.request
 import zipfile
+import argparse
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "packaging" / "build"
-PACKAGE = BUILD / "DLSS-Studio-Portable"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--package", type=Path, default=BUILD / "DLSS-Studio-Portable")
+PACKAGE = parser.parse_args().package.resolve()
 CACHE = ROOT / "packaging" / "cache"
 ARTIFACTS = ROOT / "outputs"
 for path in (BUILD, CACHE, ARTIFACTS):
@@ -34,7 +37,10 @@ base = Path(json.loads(subprocess.check_output([str(ROOT / "app/.venv/Scripts/py
 shutil.copytree(base / "Lib/distutils", runtime / "Lib/distutils", ignore=ignore)
 app = PACKAGE / "app"
 app.mkdir()
-for name in ("app.py", "nr_video.py", "render_engine.py", "process_runner.py", "studio_storage.py", "ui_style.py", "studio_server.py", "serve_local.py", "gpu_runtime.py", "dlss5-components.json", "requirements-installed.txt"):
+for file in (ROOT / "app").glob("*.py"):
+    if not file.name.startswith("test_") and not file.name.endswith(".original.py"):
+        shutil.copy2(file, app / file.name)
+for name in ("dlss5-components.json", "requirements-installed.txt"):
     shutil.copy2(ROOT / "app" / name, app / name)
 for name in ("out", "web"):
     shutil.copytree(ROOT / "app" / name, app / name, ignore=ignore)
@@ -46,10 +52,15 @@ licenses.mkdir()
 for name in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
     shutil.copy2(ROOT / name, PACKAGE / name)
 shutil.copy2(ROOT / "app/README.md", licenses / "video2dlssnr-README.md")
+shutil.copy2(ROOT / "source/THIRD-PARTY-engine-LICENSE.txt", licenses / "engine-MIT-LICENSE.txt")
 shutil.copy2(ROOT / "packaging/README-package.txt", PACKAGE / "使用说明.txt")
+tools = PACKAGE / "tools"
+tools.mkdir()
+for name in ("incremental_update.py", "components.py"):
+    shutil.copy2(ROOT / "packaging" / name, tools / name)
 (licenses / "THIRD-PARTY.txt").write_text("""Bundled third-party components retain their respective notices and terms.
-Original engine: https://github.com/DaniilSokolyuk/video2dlssnr (release v1.3)
-NVIDIA NGX / DLSS binaries: supplied unchanged from the original release.
+Engine attribution: https://github.com/DaniilSokolyuk/video2dlssnr; DLSS Studio modifications are built from the included source.
+NVIDIA NGX / DLSS binaries retain their vendor terms; component identities are recorded in app/dlss5-components.json.
 Python 3.10.11 x64: https://www.python.org/downloads/release/python-31011/
 Python license: ../runtime/LICENSE.txt
 Python package licenses: ../runtime/Lib/site-packages/*dist-info/

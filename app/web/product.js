@@ -1,9 +1,12 @@
 /* Settings are drafts; every rendered version retains its own settings. */
-const renderKeys=['size','style','intensity','local_structure','local_tone','skin','global_tone','detail','color','ui_correction','auto_mask','hdr'];
+const renderKeys=['size','style','intensity','local_structure','local_tone','skin','global_tone','detail','color','ui_correction','auto_mask','hdr','protect_region','protect_skin','protect_highlights','render_scale'];
 function settingSummary(values={}){
   const changes=[['local_structure','结构'],['local_tone','局部色调'],['skin','皮肤'],['global_tone','全局色调'],['detail','效果融合'],['color','色彩融合']]
     .filter(([key])=>values[key]!==undefined&&Number(values[key])!==1).map(([key,label])=>`${label} ${Math.round(values[key]*100)}%`);
   for(const [key,label] of [['ui_correction','界面修正'],['auto_mask','自动遮罩'],['hdr','HDR']])if(values[key])changes.push(label);
+  for(const [key,label] of [['stability','时序稳定'],['protect_skin','肤色保护'],['protect_highlights','高光保护']])if(values[key])changes.push(`${label} ${Math.round(values[key]*100)}%`);
+  if(values.protect_region?.length===4)changes.push('区域保护');
+  if(values.render_scale&&values.render_scale!==1)changes.push(`推理 ${Math.round(values.render_scale*100)}%`);
   return `${values.style||'默认'} · 强度 ${Math.round((values.intensity??1)*100)}%${changes.length?' · '+changes.join(' · '):''}`;
 }
 function resultDirty(){
@@ -14,12 +17,13 @@ function resultDirty(){
     if(clip===range.full||clip&&(Math.abs(range.start-output.settings.clip_start)>.000001||Math.abs(range.duration-output.settings.clip_duration)>.000001))return true;
   }
   if(state.mode==='video'&&output.job_kind!=='frame'){
-    keys.push('motion','motion_vis','motion_engine','codec','container','audio');
+    keys.push('motion','motion_vis','motion_engine','codec','container','audio','stability','timing_mode','preserve_media');
     const codec=desired.codec;
     if(codec==='prores')keys.push('prores_profile');
     else if(codec!=='ffv1'){keys.push('cq','bitrate');if(!codec.startsWith('h264_'))keys.push('bit_depth');if(codec.endsWith('_nvenc'))keys.push('enc_preset')}
   }
-  return keys.some(key=>desired[key]!==undefined&&desired[key]!==output.settings[key]);
+  const defaults={protect_region:[],protect_skin:0,protect_highlights:0,stability:0,render_scale:1,timing_mode:'preserve',preserve_media:true};
+  return keys.some(key=>desired[key]!==undefined&&JSON.stringify(desired[key])!==JSON.stringify(output.settings[key]??defaults[key]));
 }
 function refreshProduct(){
   const output=currentOutput(),dirty=resultDirty(),video=state.mode==='video',locked=state.busy||state.uploading;
@@ -41,6 +45,7 @@ function settingsChanged(){
   paintBitrate();refreshProduct();
   if(resultDirty()&&!$('#notice').classList.contains('error'))$('#notice').hidden=true;
   saveSession();
+  window.StudioEnhancements?.settingsChanged();
 }
 document.addEventListener('input',event=>{if(event.target.form===form)settingsChanged()});
 document.addEventListener('change',event=>{if(event.target.form===form)settingsChanged()});

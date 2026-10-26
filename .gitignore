@@ -40,3 +40,12 @@ components/
 /desktop-smoke-result.txt
 /smoke-*.txt
 /launcher-preview.png
+
+# Local C++ compiler products.
+source/build/
+source/out/
+source/third_party/nvngx/lib/
+*.obj
+*.pdb
+*.ilk
+*.lib

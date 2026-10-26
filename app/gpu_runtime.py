@@ -8,6 +8,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from runtime_identity import RuntimeIdentity
 
 
 def enumerate_adapters():
@@ -136,8 +137,10 @@ class GpuRuntime:
         self.lock = threading.RLock()
         self.selection = None
         self.verified = set()
+        self.continuous_verified = set()
         self.checked = {}
         self.error = '正在识别显卡…'
+        self.identities = RuntimeIdentity(self.root)
         self.refresh()
 
     def refresh(self):
@@ -179,14 +182,31 @@ class GpuRuntime:
 
     def mark_verified(self, selection):
         with self.lock:
-            self.verified.add((selection.luid, selection.sha256))
+            self.verified.add(self.identity(selection)['digest'])
+
+    def mark_continuous_verified(self, selection):
+        with self.lock:
+            digest = self.identity(selection)['digest']
+            self.verified.add(digest)
+            self.continuous_verified.add(digest)
+
+    def identity(self, selection=None):
+        with self.lock:
+            selected = selection or self.selection
+            if not selected:
+                return {'identity_schema': 1, 'available': False, 'reason': self.error}
+            return self.identities.build(selected)
 
     def public(self):
         with self.lock:
             selected = self.selection
-            verified = selected and (selected.luid, selected.sha256) in self.verified
+            identity = self.identity(selected) if selected else None
+            verified = bool(identity and identity.get('digest') in self.verified)
             return {'model': 'DLSS 5', 'ready': bool(selected),
                     'gpu_name': selected.name if selected else None,
                     'profile': selected.profile if selected else None,
+                    'runtime_digest': identity.get('digest') if identity else None,
+                    'driver_version': next((d.get('version') for d in identity.get('driver', []) if d.get('version')), None) if identity else None,
+                    'capabilities': {**self.identities.capabilities(), 'continuous_validation': bool(identity and identity.get('digest') in self.continuous_verified), 'identity_schema': 1},
                     'status': 'verified' if verified else 'matched' if selected else 'unavailable',
                     'message': '本次启动已成功渲染' if verified else '已自动匹配，等待首次处理验证' if selected else self.error}

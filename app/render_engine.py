@@ -2,6 +2,7 @@
 import os
 import sys
 import subprocess
+import time
 from nr_video import find_tool
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -142,21 +143,54 @@ BROWSER_PLAYABLE = {("mp4", "h264_nvenc"), ("mp4", "h264_cpu"), ("mp4", "av1_nve
                     ("webm", "av1_nvenc"), ("webm", "av1_svt")}
 
 
-def make_preview(out, runner=None, nvenc=True):
-    """A quick 8-bit H.264 copy (<=1080p) next to the result, for the browser only."""
+def make_preview(out, runner=None, nvenc=True, progress=None, destination=None):
+    """An explicitly SDR H.264 display proxy; the high-precision master is untouched."""
     ffmpeg = find_tool("ffmpeg")
     if not ffmpeg:
         return None
-    prev = os.path.splitext(out)[0] + "_preview.mp4"
-    common = [ffmpeg, "-y", "-v", "error", "-i", out, "-map", "0:v:0", "-map", "0:a:0?",
-              "-vf", "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic,format=yuv420p"]
-    tail = ["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", prev]
+    prev = str(destination) if destination is not None else os.path.splitext(out)[0] + "_preview.mp4"
+    from nr_video import probe, colour_tags
+    from video_pipeline import sdr_proxy_filter
+    info = probe(find_tool("ffprobe"), out)
+    tone_map = sdr_proxy_filter(info, rgb_input=info.get("matrix") == "gbr")
+    matrix, primaries, transfer = colour_tags(info)
+    conversion = tone_map or f"zscale=pin={primaries}:tin={transfer}:min={'gbr' if info.get('matrix') == 'gbr' else matrix}:rin={'full' if info.get('range') == 'pc' else 'limited'}:p=bt709:t=bt709:m=bt709:r=limited"
+    filters = [conversion, "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:flags=bicubic", "format=yuv420p", "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv"]
+    common = [ffmpeg, "-y", "-v", "error", "-i", out, "-map", f"0:v:{info.get('video_ordinal',0)}", "-map", "0:a:0?",
+              "-vf", ",".join(filters), "-fps_mode", "passthrough", "-enc_time_base", "1/1000000",
+              "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]
+    tail = ["-c:a", "aac", "-b:a", "128k", "-video_track_timescale", "1000000", "-movflags", "+faststart", prev]
     encoders = ([["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "24", "-b:v", "0"]] if nvenc else [])
-    encoders.append(["-c:v", "libopenh264", "-b:v", "8M"])
+    encoders.append(["-c:v", "libopenh264", "-b:v", "8M", "-allow_skip_frames", "0"])
     for venc in encoders:
-        run = runner.run if runner else lambda args: subprocess.run(args, capture_output=True,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if run(common + venc + tail).returncode == 0:
+        command=common + venc + tail
+        if runner and hasattr(runner,"stream_lines"):
+            command=command[:1]+["-stats_period","1","-progress","pipe:1","-nostats"]+command[1:]
+            process=runner.start(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",bufsize=1)
+            values={};observed=[0,0,0];last_advance=time.monotonic()
+            for line in runner.stream_lines(process,idle_timeout=900):
+                if "=" in line:
+                    key,value=line.split("=",1);values[key]=value
+                    if key=="progress":
+                        def integer(name):
+                            try:return max(0,int(values.get(name,0)))
+                            except (TypeError,ValueError):return 0
+                        current=[integer("frame"),integer("out_time_us"),integer("total_size")]
+                        if any(now>before for now,before in zip(current,observed)):
+                            observed=[max(now,before) for now,before in zip(current,observed)]
+                            last_advance=time.monotonic()
+                            if progress:
+                                percent=min(99,int(100*current[1]/1000000/max(.000001,info["duration"])))
+                                progress({"phase":"preview","progress":percent,"message":f"正在生成浏览器预览… {percent}%",
+                                          "preview_seconds":current[1]/1000000,"preview_frame":current[0]})
+                if time.monotonic()-last_advance>900:
+                    runner.cancel()
+                    raise TimeoutError("浏览器预览长时间没有编码进展；增强母版与完成片段仍保留。")
+            runner.check()
+            code=process.wait()
+        else:
+            code=subprocess.run(command,capture_output=True,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0)).returncode
+        if code == 0:
             return prev
     return None
 

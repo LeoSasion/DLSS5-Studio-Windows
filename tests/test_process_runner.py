@@ -13,6 +13,30 @@ from process_runner import ProcessGroup, RenderCancelled
 
 @unittest.skipUnless(os.name=='nt', 'Windows process ownership regression')
 class ProcessOwnershipTests(unittest.TestCase):
+    def test_silent_pipeline_watchdog_terminates_the_process(self):
+        group = ProcessGroup()
+        try:
+            process = group.start([sys.executable, '-u', '-c', 'import time;time.sleep(30)'],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            started = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                list(group.stream_lines(process, idle_timeout=.3))
+            self.assertIsNotNone(process.wait(timeout=3))
+            self.assertLess(time.monotonic() - started, 3)
+        finally:
+            group.close()
+
+    def test_progress_stream_splits_carriage_returns_and_preserves_final_line(self):
+        group = ProcessGroup()
+        try:
+            process = group.start([sys.executable, '-u', '-c',
+                                   "import sys;sys.stdout.write('one\\rtwo\\nthree');sys.stdout.flush()"],
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            self.assertEqual(list(group.stream_lines(process, idle_timeout=3)), ['one', 'two', 'three'])
+            self.assertEqual(process.wait(timeout=3), 0)
+        finally:
+            group.close()
+
     def test_cancellation_terminates_descendants_and_rejects_new_children(self):
         from ctypes import wintypes
         kernel=ctypes.WinDLL('kernel32',use_last_error=True)

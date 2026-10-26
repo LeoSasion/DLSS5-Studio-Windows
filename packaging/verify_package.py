@@ -9,19 +9,33 @@ import socket
 import time
 import zipfile
 import httpx
+import argparse
 
 ROOT = Path(__file__).resolve().parent.parent
-archive = ROOT / "outputs/DLSS-Studio-Windows-x64.zip"
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--archive",type=Path,default=ROOT/"outputs/DLSS-Studio-Windows-x64.zip")
+parser.add_argument("--report",type=Path,default=ROOT/"outputs/package-verification.json")
+args=parser.parse_args()
+archive = args.archive.resolve()
 validation = ROOT / ("packaging/validation/解压 测试 " + time.strftime("%H%M%S"))
 validation.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(archive) as z:
+    roots={Path(info.filename).parts[0] for info in z.infolist() if info.filename}
+    assert len(roots)==1,"Archive must contain one application directory"
+    package_name=next(iter(roots))
+    for info in z.infolist():
+        assert (validation/info.filename).resolve().is_relative_to(validation.resolve()),info.filename
     z.extractall(validation)
-package = validation / "DLSS-Studio-Portable"
+package = validation / package_name
 manifest = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
 for name, entry in manifest.items():
     data = (package / name).read_bytes()
     assert len(data) == entry["bytes"] and hashlib.sha256(data).hexdigest() == entry["sha256"], name
 print("PASS: extracted ZIP and checked every payload checksum", flush=True)
+# QA fixtures are added only after validating the delivered manifest.
+for shape in ("landscape","portrait"):
+    import shutil
+    shutil.copy2(ROOT/f"tests/fixtures/preview-4k-{shape}.mp4",package/f"app/web/test-preview-4k-{shape}.mp4")
 env = os.environ.copy()
 env["DLSS_STUDIO_TEST_VIDEO"] = str(ROOT / "tests/fixtures/video-compare.mp4")
 env["DLSS_STUDIO_TEST_WORKBENCH"] = str(ROOT / "tests/workbench-workflow.js")
@@ -129,5 +143,5 @@ report["desktop_video"] = json.loads((package / "desktop-video-diagnostics.json"
 report["desktop_workbench"] = json.loads((package / "desktop-workbench-diagnostics.json").read_text(encoding="utf-8-sig"))
 assert report["desktop_workbench"]["done"] and not report["desktop_workbench"]["error"], report["desktop_workbench"]
 print(report["desktop"],flush=True)
-(ROOT / "outputs/package-verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),encoding="utf-8")
+args.report.resolve().write_text(json.dumps(report, ensure_ascii=False, indent=2),encoding="utf-8")
 print(report["launcher"],flush=True)

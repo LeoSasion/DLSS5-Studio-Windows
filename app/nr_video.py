@@ -1,20 +1,9 @@
-"""DLSS 5 video: Super Resolution + Neural Rendering over a whole clip, streaming.
+"""DLSS video CLI and reusable geometry/codec helpers.
 
-This is the one entry point for video - it drives the optimised, fully-on-GPU flow:
-
-    ffmpeg (decode) --raw rgba--> video2dlssnr --nr-video --raw rgba--> ffmpeg (encode + audio)
-
-The heavy work (upscale, sRGB encode, neural rendering, composite, 8-bit pack) all happens on
-the GPU inside video2dlssnr; nothing is shuttled back to the CPU between DLSS and NR. ffmpeg only
-decodes and encodes. A live progress bar reports the running fps (parsed from the tool's NRPROG
-lines) with an ETA.
-
-    python nr_video.py --in clip.mp4 --out clip_4k.mp4 --nr-width 3840 --nr-style 2
-
-Output quality is constant-quality by default (--cq 19, 10-bit HEVC, colour tagged bt709), so the
-encoder is never the weak link: the old fixed ~2 Mbit/s NVENC default made every 4K result blocky.
-The container comes from the --out extension (.mp4 / .mkv / .mov / .webm), the codec from --codec.
-The NR / scale flags are named exactly like video2dlssnr.exe (--nr-*).
+video_pipeline owns source-PTS restoration, high-precision RGB checkpoints,
+segment pre-roll, pause/resume and the separate delivery-encoding stage.
+SDR 8-bit uses RGBA; HDR/high-bit-depth input uses RGBA64 throughout the NR
+interface and lossless intermediate, independently of delivery codec choice.
 """
 
 import argparse
@@ -27,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 
 # ----------------------------------------------------------------------------- encoders
@@ -88,10 +78,11 @@ def find_tool(name):
 def probe(ffprobe, path):
     """Video geometry / rate / colour tags and the first audio codec, via ffprobe JSON."""
     out = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-show_streams",
-                          "-show_format", path], capture_output=True, text=True, check=True,
+                          "-show_format", "-show_chapters", path], capture_output=True, text=True, check=True,
                          timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
     info = json.loads(out or "{}")
-    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
+    video_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
+    v = next((s for s in video_streams if not s.get("disposition", {}).get("attached_pic")), None)
     if not v:
         raise ValueError("文件中没有可读取的视频画面。")
     # ffmpeg autorotates decoded frames. Raw RGBA has no geometry metadata, so the
@@ -105,11 +96,21 @@ def probe(ffprobe, path):
     width, height = int(v["width"]), int(v["height"])
     if quarter % 2:
         width, height = height, width
-    a = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), None)
-    rate = v.get("r_frame_rate") or v.get("avg_frame_rate") or "25/1"
+    audio_streams = [s for s in info.get("streams", []) if s.get("codec_type") == "audio"]
+    a = audio_streams[0] if audio_streams else None
+    def valid_rate(value):
+        try:
+            num, den = str(value).split("/")
+            return float(num) > 0 and float(den) > 0
+        except (ValueError, TypeError):
+            return False
+    rate = next((value for value in (v.get("avg_frame_rate"), v.get("r_frame_rate")) if valid_rate(value)), "25/1")
     num, den = (rate.split("/") + ["1"])[:2]
     fps = float(num) / float(den or 1)
-    frames = int(v.get("nb_frames") or 0)
+    try:
+        frames = int(v.get("nb_frames") or 0)
+    except (ValueError, TypeError):
+        frames = 0
     if frames <= 0:  # some containers don't store a frame count; estimate from duration
         try:
             dur = float(v.get("duration") or info.get("format", {}).get("duration") or 0)
@@ -117,27 +118,52 @@ def probe(ffprobe, path):
         except ValueError:
             frames = 0
     unk = lambda s: (s or "unknown") if s not in ("", None, "unspecified", "reserved") else "unknown"
+    def number(value, default=0):
+        try:
+            result = float(value)
+            return result if result == result and abs(result) != float("inf") else default
+        except (TypeError, ValueError):
+            return default
+    format_start=number(info.get("format", {}).get("start_time"))
+    video_start=number(v.get("start_time"),format_start)
+    stream_duration=number(v.get("duration"))
+    extent=max(0,video_start-format_start)+stream_duration if stream_duration else number(info.get("format", {}).get("duration"),frames/fps if fps else 0)
     return {
         "w": width, "h": height, "rotation": rotation, "fps": fps, "rate": rate, "frames": frames,
-        "duration": float(v.get("duration") or info.get("format", {}).get("duration") or (frames / fps if fps else 0)),
+        "duration": extent,
         "pix_fmt": v.get("pix_fmt", ""), "range": unk(v.get("color_range")),
         "matrix": unk(v.get("color_space")), "primaries": unk(v.get("color_primaries")),
         "trc": unk(v.get("color_transfer")),
         "audio": a.get("codec_name") if a else None,
+        "audio_streams": audio_streams,
+        "subtitle_streams": [s for s in info.get("streams", []) if s.get("codec_type") == "subtitle"],
+        "attachments": [s for s in info.get("streams", []) if s.get("codec_type") == "attachment"],
+        "start_time": video_start,
+        "format_start_time": format_start,
+        "stream_duration": stream_duration,
+        "video_index": int(v.get("index",0)),
+        "video_ordinal": video_streams.index(v),
+        "video_codec": v.get("codec_name", "unknown"),
+        "format_name": info.get("format", {}).get("format_name", "unknown"),
+        "avg_rate": v.get("avg_frame_rate"),
+        "bits": int(number(v.get("bits_per_raw_sample"))),
+        "side_data": v.get("side_data_list", []),
+        "chapters": info.get("chapters", []),
     }
 
 
 def colour_tags(src):
     """The (matrix, primaries, trc) the clip is in. Unknown tags default to bt709 (SD: bt601).
 
-    Known tags are carried through so an HDR (bt2020 / PQ) clip keeps its signalling: the NR
-    model then works on the PQ-coded signal, which is what the other DLSS 5 video tools do too.
+    Known HDR tags describe the encoded source and delivery signal. The render
+    engine receives a separate transfer identifier and handles its model proxy.
     """
     sd = src["h"] <= 576 and src["w"] <= 1024
+    hdr = src.get("trc") in {"smpte2084", "arib-std-b67"}
     # Only Y'CbCr matrices can be carried into a YUV output; an RGB source reports "gbr".
     yuv_matrices = {"bt709", "bt470bg", "smpte170m", "smpte240m", "bt2020nc", "bt2020c", "fcc"}
-    m = src["matrix"] if src["matrix"] in yuv_matrices else ("smpte170m" if sd else "bt709")
-    p = src["primaries"] if src["primaries"] != "unknown" else ("smpte170m" if sd else "bt709")
+    m = src["matrix"] if src["matrix"] in yuv_matrices else ("bt2020nc" if hdr else "smpte170m" if sd else "bt709")
+    p = src["primaries"] if src["primaries"] != "unknown" else ("bt2020" if hdr else "smpte170m" if sd else "bt709")
     t = src["trc"] if src["trc"] != "unknown" else ("smpte170m" if sd else "bt709")
     return m, p, t
 
@@ -339,7 +365,13 @@ def build_parser():
     g.add_argument("--nr-global-tone", type=float, default=-1.0, help="DLSSNR.GlobalToneStrength (<0 = model default)")
     g.add_argument("--nr-detail", type=float, default=1.0, help="composite strength (0 = original, 1 = full NR)")
     g.add_argument("--nr-color", type=float, default=1.0, help="0 = keep original hue, 1 = NR colour")
-    g.add_argument("--nr-hdr", action="store_true", help="feed linear (HDR) instead of the sRGB proxy")
+    g.add_argument("--nr-hdr", action="store_true", help="legacy flag; PQ/HLG video is detected and preserved automatically")
+    g.add_argument("--nr-stability", type=float, default=0, help="signed correction temporal stabilization (0-1)")
+    g.add_argument("--nr-protect", "--nr-protect-region", default="", help="normalized original-protection rectangle x,y,w,h")
+    g.add_argument("--nr-protect-skin", type=float, default=0, help="original skin protection (0-1)")
+    g.add_argument("--nr-protect-highlights", type=float, default=0, help="original highlight protection (0-1)")
+    g.add_argument("--nr-render-scale", type=float, default=1, help="NR work scale, output geometry remains unchanged (0.5-1)")
+    g.add_argument("--nr-cache-key", default="", help="runtime/model identity for bounded pre-composite NR frame reuse")
     g.add_argument("--nr-ui-correction", type=int, default=0, help="DLSSNR.UICorrection (0/1)")
     g.add_argument("--nr-auto-mask", action="store_true", help="enable DLSSNR.UseAutoMask")
     g.add_argument("--nr-motion", type=int, default=1, help="optical-flow motion vectors for NR (0/1)")
@@ -370,156 +402,33 @@ def build_parser():
     g.add_argument("--audio", choices=["auto", "copy", "aac", "opus", "flac", "pcm", "none"], default="auto",
                    help="auto (default) copies the track when the container allows, else re-encodes")
     g.add_argument("--audio-bitrate", type=int, default=192, help="kbit/s for aac / opus (default 192)")
+    g.add_argument("--preserve-media", type=int, choices=[0, 1], default=1, help="preserve compatible audio tracks, subtitles, chapters and attachments")
+    g.add_argument("--timing", choices=["preserve", "cfr"], default="preserve", help="preserve source presentation times or explicitly convert to constant frame rate")
+    g.add_argument("--work-dir", default="", help="persistent rendered-segment cache; omit for temporary workspace")
+    g.add_argument("--render-key", default="", help="application render identity, excluding encoding choices")
+    g.add_argument("--resume", action="store_true", help="reuse validated completed segments from work directory")
+    g.add_argument("--pause-file", default="", help="pause at a completed segment boundary when this file exists (exit 75)")
+    g.add_argument("--segment-seconds", type=float, default=10, help="checkpoint segment duration (1-60 seconds)")
+    g.add_argument("--warmup-frames", type=int, default=16, help="preceding source frames processed but not written at each segment (0-120)")
+    g.add_argument("--seam-seconds", type=float, default=.25, help="same-source-frame prediction overlap at segment joins (0 disables; 0-1 seconds)")
+    g.add_argument("--stall-timeout", type=float, default=180, help="fail a render that makes no observable progress for this many seconds")
     g.add_argument("--dry-run", action="store_true", help="print the three commands and exit")
     return ap
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args()
-
-    ffmpeg, ffprobe = find_tool("ffmpeg"), find_tool("ffprobe")
-    if not ffmpeg or not ffprobe:
-        sys.exit("ffmpeg/ffprobe not found. Install with:  winget install Gyan.FFmpeg")
-
-    ext = os.path.splitext(args.out)[1].lower()
-    if ext not in CONTAINERS:
-        sys.exit(f"--out must end in one of {', '.join(CONTAINERS)} (got {ext or 'no extension'!r})")
-    codec = resolve_codec(args.codec)
-    if codec not in CONTAINERS[ext]:
-        sys.exit(f"{codec} does not go into {ext}; containers for it: "
-                 + ", ".join(e for e, ok in CONTAINERS.items() if codec in ok))
-
-    src = probe(ffprobe, args.inp)
-    inW, inH, fps, total = src["w"], src["h"], src["fps"], src["frames"]
-    if (args.start or args.duration) and (not (0 <= args.start < src["duration"]) or not (0 <= args.duration <= src["duration"] - args.start + .001)):
-        sys.exit("invalid clip start or duration")
-    if args.start or args.duration:
-        total = round((args.duration or src["duration"] - args.start) * fps)
-    if args.frames:
-        total = min(total, args.frames) if total else args.frames
-    outW, outH = output_size(src, args.nr_width, args.nr_height, args.nr_scale, args.nr_fit)
-    toolW, toolH = tool_size(src, outW, outH)
-    tags = colour_tags(src)
-    hdr_in = src["trc"] in ("smpte2084", "arib-std-b67")
-    if hdr_in:
-        print(f"HDR source ({src['trc']}): colour tags carried through; NR runs on the PQ/HLG-coded "
-              f"signal", file=sys.stderr)
-
-    upscale = (toolW, toolH) != (inW, inH)
-
-    steps = []
-    if upscale:
-        steps.append(f"DLSS {inW}x{inH}->{toolW}x{toolH}")
-    if (toolW, toolH) != (outW, outH):
-        steps.append(f"ffmpeg resize {toolW}x{toolH}->{outW}x{outH}")
-    print(f"{inW}x{inH} @ {fps:.3f} fps, {total or '?'} frames  ->  {outW}x{outH}  "
-          f"[{', '.join(steps) or 'native'}]  style={args.nr_style} intensity={args.nr_intensity} "
-          f"detail={args.nr_detail}", file=sys.stderr)
-
-    # ---- decode: tag unknown colour metadata, proper chroma upsampling, rgba out.
-    setp = []
-    for key, val, cur in (("colorspace", tags[0], src["matrix"]),
-                          ("color_primaries", tags[1], src["primaries"]),
-                          ("color_trc", tags[2], src["trc"])):
-        if cur == "unknown":
-            setp.append(f"{key}={val}")
-    vf = ([f"setparams={':'.join(setp)}"] if setp else []) + [f"scale=flags={SWS}", "format=rgba"]
-    seek = ["-ss", str(args.start)] if args.start else []
-    dec = [ffmpeg, "-v", "error"] + seek + ["-i", args.inp]
-    if args.duration:
-        dec += ["-t", str(args.duration)]
-    if args.frames:
-        dec += ["-frames:v", str(args.frames)]
-    dec += ["-vf", ",".join(vf), "-f", "rawvideo", "-"]
-
-    # ---- the tool
-    tool = [args.exe, "--nr-video", "--nr-in", f"{inW}x{inH}",
-            "--nr-style", str(args.nr_style), "--nr-preset", str(args.nr_preset),
-            "--nr-intensity", str(args.nr_intensity),
-            "--nr-local-structure", str(args.nr_local_structure),
-            "--nr-local-tone", str(args.nr_local_tone), "--nr-skin", str(args.nr_skin),
-            "--nr-global-tone", str(args.nr_global_tone), "--nr-detail", str(args.nr_detail),
-            "--nr-color", str(args.nr_color), "--nr-ui-correction", str(args.nr_ui_correction),
-            "--nr-motion", str(args.nr_motion), "--nr-motion-engine", args.nr_motion_engine,
-            "--nr-sr-preset", args.nr_sr_preset]
-    if args.nr_hdr:
-        tool += ["--nr-hdr"]
-    if args.nr_auto_mask:
-        tool += ["--nr-auto-mask"]
-    if args.nr_motion_vis:
-        tool += ["--nr-motion-vis"]
-    if upscale:  # pass the exact even dims so tool and encoder agree
-        tool += ["--nr-width", str(toolW), "--nr-height", str(toolH)]
-    if args.dll_dir:  # empty => the tool looks for nvngx_dlssnr.dll next to video2dlssnr.exe
-        tool += ["--dll-dir", args.dll_dir]
-    if args.adapter >= 0:
-        tool += ["--adapter", str(args.adapter)]
-
-    # ---- encode: RGB -> YUV with the right matrix and full-chroma resampling, then the codec.
-    vargs, pix = video_args(codec, args, outW, outH, tags)
-    evf = []
-    if (toolW, toolH) != (outW, outH):
-        evf.append(f"scale={outW}:{outH}:flags={SWS}")
-    if pix != "bgr0":
-        evf.append(f"scale=out_color_matrix={tags[0]}:out_range=tv:flags={SWS}")
-    evf.append(f"format={pix}")
-    # ffmpeg takes the stream's colour signalling from the frames, so tag them here (the encoder
-    # -colorspace/-color_* flags alone leave primaries / transfer "unknown" in the file).
-    if pix != "bgr0":
-        evf.append(f"setparams=colorspace={tags[0]}:color_primaries={tags[1]}:color_trc={tags[2]}"
-                   ":range=tv")
-    else:  # RGB output: no Y'CbCr matrix to signal, full range
-        evf.append(f"setparams=color_primaries={tags[1]}:color_trc={tags[2]}:range=pc")
-    enc = [ffmpeg, "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba",
-           "-s", f"{toolW}x{toolH}", "-r", src["rate"], "-i", "-",
-           ] + seek + ["-i", args.inp, "-map", "0:v:0"]
-    enc += audio_args(src, ext, args.audio, args.audio_bitrate)
-    enc += ["-vf", ",".join(evf)] + vargs
-    if ext in (".mp4", ".mov"):
-        enc += ["-movflags", "+faststart"]
-    if args.duration:
-        enc += ["-t", str(args.duration)]
-    enc += ["-shortest", args.out]
-
-    if args.dry_run:
-        for name, cmd in (("decode", dec), ("tool", tool), ("encode", enc)):
-            print(f"{name}: " + subprocess.list2cmdline(cmd))
-        return 0
-
-    started = time.perf_counter()
-    p1 = subprocess.Popen(dec, stdout=subprocess.PIPE)
-    p2 = subprocess.Popen(tool, stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p1.stdout.close()
-    p3 = subprocess.Popen(enc, stdin=p2.stdout)
-    p2.stdout.close()
-
-    state = {"frames": 0, "fps": 0.0, "done": None}
-    pump = threading.Thread(target=pump_progress, args=(p2.stderr, total, state), daemon=True)
-    pump.start()
-
-    rc3 = p3.wait()
-    rc2 = p2.wait()
-    rc1 = p1.wait()
-    pump.join(timeout=2)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
-
-    elapsed = time.perf_counter() - started
-    rc = rc3 or rc2 or rc1
-    if rc == 0:
-        # Prefer the tool's own final tally (exact frame count + steady-state GPU fps).
-        frames, steady = state["frames"], state["fps"]
-        m = re.search(r"done: (\d+) frames in [\d.]+ s \(([\d.]+) fps\)", state["done"] or "")
-        if m:
-            frames, steady = int(m.group(1)), float(m.group(2))
-        wall = frames / elapsed if elapsed > 0 else 0.0
-        size = os.path.getsize(args.out) if os.path.exists(args.out) else 0
-        kbps = size * 8 / 1000 / (frames / fps) if frames and fps else 0
-        print(f"wrote {args.out}  ({frames} frames, {steady:.1f} fps GPU / {wall:.1f} fps wall, "
-              f"{elapsed:.1f}s, {size / 1e6:.1f} MB, {kbps / 1000:.1f} Mbit/s)", file=sys.stderr)
-    else:
-        print(f"failed (decode={rc1} tool={rc2} encode={rc3})", file=sys.stderr)
-    return rc
+    # The checkpointed runner owns source timestamps and high-precision intermediates.
+    # Kept as a separate module so the CLI geometry/codec helpers remain reusable.
+    from video_pipeline import run_pipeline
+    try:
+        return run_pipeline(args)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

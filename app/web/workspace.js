@@ -52,8 +52,10 @@
   const inspector = document.querySelector('.inspector');
   function restoreAdvanced(roots) {
     for (const item of roots) {
-      for (const control of item.querySelectorAll('input')) {
-        if (control.type === 'checkbox') control.checked = control.defaultChecked;
+      for (const control of item.querySelectorAll('input,select')) {
+        if (control.name === 'protect_region') control.value = '[]';
+        else if (control.tagName === 'SELECT') control.selectedIndex = Math.max(0,[...control.options].findIndex(option=>option.defaultSelected));
+        else if (control.type === 'checkbox') control.checked = control.defaultChecked;
         else control.value = control.defaultValue;
         control.dispatchEvent(new Event('input', {bubbles:true}));
       }
