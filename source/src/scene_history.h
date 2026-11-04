@@ -14,7 +14,8 @@ class SceneHistory {
 public:
     bool Update(const std::vector<float>& gray,int w,int h,float fps=30) {
         if(previous_.size()!=gray.size() || gray.empty()) {
-            previous_=gray;lastCut_=frame_++;return true;
+            // Initialization must not debounce a genuine cut immediately after it.
+            previous_=gray;lastCut_=-1000000;++frame_;return true;
         }
         std::array<double,32> a{},b{};
         for(size_t i=0;i<gray.size();++i) {

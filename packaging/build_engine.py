@@ -90,6 +90,10 @@ def main():
     if args.rtx_video_sdk:
         shutil.copy2(runtime, out / "nvngx_vsr.dll")
     if args.tests:
+        scene_test = source / "tests/scene_history_tests.cpp"
+        if scene_test.is_file():
+            compile_target("scene_history_tests.exe", [scene_test], link=[])
+            subprocess.run([str(out / "scene_history_tests.exe")], cwd=source, check=True, env=env)
         post_test = source / "tests/nr_post_tests.cpp"
         if post_test.is_file():
             compile_target("nr_post_tests.exe", [post_test], link=[])

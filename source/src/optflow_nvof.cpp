@@ -127,8 +127,9 @@ bool NvofFlow::RegisterTex(GpuTexture& tex, NvOFGPUBufferHandle* outHandle) {
     rp.inputFencePoint.value = m_appVal;
     rp.hOFGpuBuffer = outHandle;
     rp.outputFencePoint.fence = m_ofaFence.Get();
-    rp.outputFencePoint.value = ++m_ofaVal;
+    rp.outputFencePoint.value = m_ofaVal+1;
     NV_OF_STATUS s = m_api.nvOFRegisterResourceD3D12(m_hOF, &rp);
+    if(s==NV_OF_SUCCESS)m_ofaVal=rp.outputFencePoint.value;
     return s == NV_OF_SUCCESS && *outHandle != nullptr;
 }
 
@@ -140,6 +141,14 @@ void NvofFlow::WaitFence(ID3D12Fence* fence, uint64_t value) {
 }
 
 bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH) {
+    Shutdown();
+    try {
+        const bool ready=InitImpl(gpu,inW,inH,targetW,targetH);
+        if(!ready)Shutdown();
+        return ready;
+    } catch(...) {Shutdown();throw;}
+}
+bool NvofFlow::InitImpl(GpuContext& gpu,int inW,int inH,int targetW,int targetH) {
     m_device = gpu.Device();
     m_queue = gpu.Queue();
     m_inW = inW;
@@ -147,11 +156,12 @@ bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH)
     m_tW = targetW;
     m_tH = targetH;
 
-    m_dll = LoadLibraryW(L"nvofapi64.dll");
+    if(!m_dll)m_dll = LoadLibraryW(L"nvofapi64.dll");
     if (!m_dll) return false;
     auto create = reinterpret_cast<PfnCreateInstanceD3D12>(
         GetProcAddress(m_dll, "NvOFAPICreateInstanceD3D12"));
     if (!create) return false;
+    m_api={};
     if (create(NV_OF_API_VERSION, &m_api) != NV_OF_SUCCESS) return false;
     if (!m_api.nvCreateOpticalFlowD3D12 || !m_api.nvOFInit || !m_api.nvOFExecuteD3D12 ||
         !m_api.nvOFRegisterResourceD3D12)
@@ -366,7 +376,7 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
     NV_OF_EXECUTE_OUTPUT_PARAMS_D3D12 eo{};
     eo.outputBuffer = m_hOut;
     eo.outputCostBuffer = m_hCost;  // null when cost is unavailable
-    NV_OF_FENCE_POINT outFp{m_ofaFence.Get(), ++m_ofaVal};
+    NV_OF_FENCE_POINT outFp{m_ofaFence.Get(), m_ofaVal+1};
     eo.fencePoint = &outFp;
 
     NV_OF_STATUS s = m_api.nvOFExecuteD3D12(m_hOF, &ei, &eo);
@@ -386,6 +396,7 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
         m_cur ^= 1;
         return;
     }
+    m_ofaVal=outFp.value;
     m_resetHints = false;
 
     // 3) wait for the engine (GPU-side), then flow grid -> target-resolution motion.
@@ -453,6 +464,8 @@ void NvofFlow::Shutdown() {
     }
     // Do not FreeLibrary(nvofapi64.dll): the driver module keeps worker threads and unloading it
     // mid-process access-violates. Leaking the handle for the life of the process is harmless.
-    m_dll = nullptr;
     m_ok = false;
+    m_cur=0;m_hasPrev=false;m_resetHints=true;m_appVal=0;m_ofaVal=0;
+    m_costFmt=DXGI_FORMAT_UNKNOWN;m_grid=1;
+    m_device=nullptr;m_queue=nullptr;
 }

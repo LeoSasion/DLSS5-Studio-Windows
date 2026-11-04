@@ -29,14 +29,21 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     if(tW!=inW||tH!=inH)ngx.Init(gpu.Device(),DefaultDllSearchPaths(dllDir),verbose);
     auto vsr=std::make_unique<VideoVsr>(gpu,ngx,inW,inH,tW,tH,
         post.pixelFormat=="rgba"&&!signalHdr&&!hdr);
+    const bool flowEnabled=motionOn||motionVis||post.stability>0;
+    OpticalFlow flow;NvofFlow nvof;bool nvofActive=false;
+    if(flowEnabled){
+        if(motionEngine!=2)nvofActive=nvof.Init(gpu,nW,nH,nW,nH);
+        if(!nvofActive)flow.Init(gpu,nW,nH);
+    }
     uint64_t signature=NrVideoCache::Hash(post.cacheKey.data(),post.cacheKey.size());
     const unsigned identity[]={inW,inH,tW,tH,nW,nH,model.preset,model.style,model.autoMask,
         model.uiCorrection,static_cast<unsigned>(motionOn),static_cast<unsigned>(motionEngine),srPreset,static_cast<unsigned>(hdr)};
     const float controls[]={model.intensity,model.localStructure,model.localTone,model.skinStructure,model.globalTone};
     signature=NrVideoCache::Hash(identity,sizeof(identity),signature);
-    const uint32_t algorithm[]={6,static_cast<uint32_t>(vsr->Available())};
+    const uint32_t algorithm[]={7,static_cast<uint32_t>(vsr->Available()),motionOn?(nvofActive?1u:2u):0u};
     signature=NrVideoCache::Hash(algorithm,sizeof(algorithm),signature);
     signature=NrVideoCache::Hash(controls,sizeof(controls),signature);
+    signature=NrVideoCache::Hash(&post.fps,sizeof(post.fps),signature);
     signature=NrVideoCache::Hash(post.transfer.data(),post.transfer.size(),signature);
     signature=NrVideoCache::Hash(post.primaries.data(),post.primaries.size(),signature);
     signature=NrVideoCache::Hash(post.pixelFormat.data(),post.pixelFormat.size(),signature);
@@ -59,7 +66,6 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     const std::wstring dataPath=(appLen>0&&appLen<MAX_PATH)?std::wstring(appData)+L"\\video2dlssnr":L".";
     GpuTexture color,depth,motion,zeroMotion,output;
     const bool needsModel=!replay&&!motionVis;
-    const bool flowEnabled=motionOn||motionVis||post.stability>0;
     if(!motionVis)output=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16B16A16_FLOAT,true,L"nrOutput");
     if(needsModel) {
         color=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16B16A16_FLOAT,true,L"nrProxy");
@@ -88,11 +94,6 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
         featureOwner.reset(feature);
     }
     std::vector<std::unique_ptr<SrStage>> srCache;
-    OpticalFlow flow;NvofFlow nvof;bool nvofActive=false;
-    if(flowEnabled){
-        if(motionEngine!=2)nvofActive=nvof.Init(gpu,nW,nH,nW,nH);
-        if(!nvofActive)flow.Init(gpu,nW,nH);
-    }
     NrGpuPost gpuPost(gpu,tW,tH,nW,nH,post);
     LogInfo("post backend: GPU FP32 residual, cubic history, gain-compensated trust");
     const bool sixteen=post.pixelFormat=="rgba64le";
