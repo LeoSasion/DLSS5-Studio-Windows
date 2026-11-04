@@ -7,8 +7,9 @@
 class NrGpuPost {
 public:
     NrGpuPost(GpuContext& gpu,int w,int h,int nw,int nh,const NrPostSettings& settings);
-    void Prepare(const std::vector<float>& anchor);
-    GpuTexture& Proxy() {return proxy_;}
+    void Prepare(const std::vector<float>& anchor,GpuTexture* modelInput);
+    GpuTexture& Proxy() {return aliasProxy_?anchor_:proxy_;}
+    double LastGpuMs() const {return lastGpuMs_;}
     std::vector<uint8_t> Process(const std::vector<float>& anchor,
         GpuTexture& neural,GpuTexture& motion,bool reset,float detail,float colour);
 private:
@@ -21,6 +22,8 @@ private:
     ComPtr<ID3D12DescriptorHeap> heap_;
     ComPtr<ID3D12PipelineState> prepare_,correction_,stabilize_,compose_;
     UINT stride_=0;
+    int descriptorNext_=0;
     int current_=0;
-    bool hasHistory_=false;
+    bool hasHistory_=false,aliasProxy_=false;
+    double lastGpuMs_=0;
 };

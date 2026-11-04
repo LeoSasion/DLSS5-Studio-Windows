@@ -793,13 +793,14 @@ def run_pipeline(args):
         checkpoint["metrics"]["encode_wall_ms"] = export_video(args, src, checkpoint, work, ffmpeg, desired)
         if args.dry_run:
             return 0
-        engine_totals, gpu_totals, cached_nr_frames, evaluated_nr_frames, initialization_ms = {}, {}, 0, 0, 0.0
+        engine_totals, gpu_totals, cached_nr_frames, evaluated_nr_frames, bypassed_nr_frames, initialization_ms = {}, {}, 0, 0, 0, 0.0
         for segment in completed:
             if segment["index"] in reused_indexes:
                 continue
             engine_metrics=segment.get("metrics", {}).get("engine", {})
             cached_nr_frames += engine_metrics.get("cached_nr_frames",0)
-            evaluated_nr_frames += max(0,engine_metrics.get("frames",0)-engine_metrics.get("cached_nr_frames",0))
+            bypassed_nr_frames += engine_metrics.get("bypassed_nr_frames",0)
+            evaluated_nr_frames += engine_metrics.get("nr_evaluated_frames",max(0,engine_metrics.get("frames",0)-engine_metrics.get("cached_nr_frames",0)-engine_metrics.get("bypassed_nr_frames",0)))
             initialization_ms += engine_metrics.get("initialization_ms",0)
             for name, value in engine_metrics.get("stage_ms", {}).items():
                 if isinstance(value, (int, float)):
@@ -810,7 +811,7 @@ def run_pipeline(args):
         checkpoint["metrics"]["engine_stage_ms"] = engine_totals
         checkpoint["metrics"]["seam_wall_ms"]=sum(segment.get("seam_wall_ms",0) for segment in completed if segment["index"] not in reused_indexes)
         checkpoint["metrics"].update(engine_gpu_stage_ms=gpu_totals,cached_nr_frames=cached_nr_frames,
-                nr_evaluated_frames=evaluated_nr_frames,initialization_ms=initialization_ms,
+                nr_evaluated_frames=evaluated_nr_frames,bypassed_nr_frames=bypassed_nr_frames,initialization_ms=initialization_ms,
                 engine_timing_note="stage_ms includes synchronization; gpu_stage_ms is native timestamp timing. Counts include pre-roll. Reused final segments do not count as this-run NR work.")
         checkpoint["metrics"]["total_wall_ms"] = (time.monotonic() - started) * 1000
         checkpoint["output"] = {"codec": args.codec, "timing": args.timing, "bytes": Path(args.out).stat().st_size}

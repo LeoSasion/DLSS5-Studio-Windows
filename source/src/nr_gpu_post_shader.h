@@ -76,7 +76,8 @@ float3 history(float2 p) {
 }
 [numthreads(8,8,1)]void Stabilize(uint3 id:SV_DispatchThreadID) {
     if(any(id.xy>=ModelSize))return;
-    float3 delta=A.Load(int3(id.xy,0)).rgb;
+    // Fused correction: avoid an extra full-resolution FP32 intermediate.
+    float3 delta=dec(saturate(A.Load(int3(id.xy,0)).rgb))-B.Load(int3(id.xy,0)).rgb;
     if(Reset!=0||Stability<=0){FloatOut[id.xy]=float4(delta,0);return;}
     float2 p=float2(id.xy)+Motion.Load(int3(id.xy,0));
     if(any(p<0)||any(p>float2(ModelSize)-1)||!all(isfinite(p))){FloatOut[id.xy]=float4(delta,0);return;}

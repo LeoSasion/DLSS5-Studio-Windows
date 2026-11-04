@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 
-PIPELINE_VERSION = "studio-render-4-motion-scene-gpu-post-vsr"
+PIPELINE_VERSION = "studio-render-5-batched-post-raw-bypass"
 
 
 def digest_json(value):

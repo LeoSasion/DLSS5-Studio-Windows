@@ -13,8 +13,14 @@ BUILD = ROOT / "packaging" / "build"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--package", type=Path, default=BUILD / "DLSS-Studio-Portable")
 parser.add_argument("--readme", type=Path, default=ROOT / "packaging/README-package.txt")
+parser.add_argument("--engine-out", type=Path, default=ROOT / "app/out",
+                    help="Use a separately compiled engine without replacing the active application")
 args = parser.parse_args()
 PACKAGE = args.package.resolve()
+ENGINE = args.engine_out.resolve()
+for name in ("video2dlssnr.exe", "nvngx.dll_dlssnr.dll"):
+    if not (ENGINE / name).is_file():
+        raise SystemExit(f"Engine build is incomplete: {ENGINE / name}")
 CACHE = ROOT / "packaging" / "cache"
 ARTIFACTS = ROOT / "outputs"
 for path in (BUILD, CACHE, ARTIFACTS):
@@ -50,7 +56,11 @@ shutil.copytree(ROOT / "app/web", app / "web", ignore=ignore)
 # Ship only the runtimes selected by this build. Local component history and
 # superseded DLLs stay available for rollback without inflating every release.
 shutil.copytree(ROOT / "app/out", app / "out",
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5", "nvngx_dlssnr.dll"))
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5", "nvngx_dlssnr.dll",
+                                             "video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_vsr.dll"))
+for name in ("video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_vsr.dll"):
+    if (ENGINE / name).is_file():
+        shutil.copy2(ENGINE / name, app / "out" / name)
 for relative in sorted({entry["path"] for entry in components["profiles"].values()}):
     source = (ROOT / "app" / relative).resolve()
     if not source.is_relative_to((ROOT / "app/out/dlss5").resolve()) or source.name != "nvngx_dlssnr.dll":
@@ -71,6 +81,7 @@ for name in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
 shutil.copy2(ROOT / "app/README.md", licenses / "video2dlssnr-README.md")
 shutil.copy2(ROOT / "source/THIRD-PARTY-engine-LICENSE.txt", licenses / "engine-MIT-LICENSE.txt")
 shutil.copy2(args.readme, PACKAGE / "使用说明.txt")
+shutil.copy2(ROOT / "source/VIDEO-QUALITY.md", PACKAGE / "技术说明.md")
 shutil.copy2(ROOT / "source/THIRD-PARTY-video-player-LICENSE.txt", licenses / "video-player-MIT-LICENSE.txt")
 tools = PACKAGE / "tools"
 tools.mkdir()

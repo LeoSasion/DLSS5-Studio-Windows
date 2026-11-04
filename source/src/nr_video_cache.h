@@ -52,7 +52,7 @@ public:
     }
     bool Replay()const{return replay_&&enabled_;}
     bool Enabled()const{return enabled_;}
-    std::vector<float> Read(uint64_t sourceHash){
+    std::vector<uint16_t> ReadHalf(uint64_t sourceHash){
         if(!Replay()||count_>=header_[4])throw ToolError("NR cache identity mismatch: frame count");
         uint64_t saved[2]{};stream_.read(reinterpret_cast<char*>(saved),16);
         std::vector<uint16_t> half(values_);stream_.read(reinterpret_cast<char*>(half.data()),half.size()*2);
@@ -60,20 +60,29 @@ public:
             stream_.close();std::error_code ec;std::filesystem::remove(path_,ec);
             throw ToolError("NR cache identity mismatch: source or payload");
         }
-        std::vector<float> output(values_);
-        for(size_t i=0;i<values_;++i)output[i]=DirectX::PackedVector::XMConvertHalfToFloat(half[i]);
-        ++count_;return output;
+        ++count_;return half;
     }
-    void Write(uint64_t sourceHash,const std::vector<float>& output){
+    void WriteHalf(uint64_t sourceHash,const std::vector<uint16_t>& half){
         if(!enabled_||replay_)return;
-        if(count_>=header_[4]||output.size()!=values_){enabled_=false;return;}
-        std::vector<uint16_t> half(values_);
-        for(size_t i=0;i<values_;++i)half[i]=DirectX::PackedVector::XMConvertFloatToHalf(output[i]);
+        if(count_>=header_[4]||half.size()!=values_){enabled_=false;return;}
         const uint64_t marker[2]={sourceHash,Hash(half.data(),half.size()*2)};
         stream_.write(reinterpret_cast<const char*>(marker),16);
         stream_.write(reinterpret_cast<const char*>(half.data()),half.size()*2);
         if(!stream_){enabled_=false;return;}
         ++count_;
+    }
+    // Preserve the host interface for callers that actually need float pixels.
+    std::vector<float> Read(uint64_t sourceHash){
+        const auto half=ReadHalf(sourceHash);std::vector<float> output(half.size());
+        for(size_t i=0;i<half.size();++i)output[i]=DirectX::PackedVector::XMConvertHalfToFloat(half[i]);
+        return output;
+    }
+    void Write(uint64_t sourceHash,const std::vector<float>& output){
+        if(!enabled_||replay_)return;
+        if(output.size()!=values_){enabled_=false;return;}
+        std::vector<uint16_t> half(output.size());
+        for(size_t i=0;i<output.size();++i)half[i]=DirectX::PackedVector::XMConvertFloatToHalf(output[i]);
+        WriteHalf(sourceHash,half);
     }
     void Finish(bool success){
         if(!enabled_||replay_)return;

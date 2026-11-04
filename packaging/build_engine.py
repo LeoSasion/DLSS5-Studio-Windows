@@ -32,12 +32,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tests", action="store_true")
     parser.add_argument("--out", type=Path, default=ROOT / "source/out")
+    parser.add_argument("--runtime-shaders", action="store_true",
+                        help="Compile the source-build fallback instead of embedded shader bytecode")
     parser.add_argument("--rtx-video-sdk", type=Path,
                         help="Locally obtained NVIDIA RTX Video SDK root (optional)")
     args = parser.parse_args()
     compiler, env = portable_environment()
     source = ROOT / "source"
     out = args.out.resolve()
+    if not args.rtx_video_sdk and (out / "nvngx_vsr.dll").exists():
+        raise RuntimeError("无 VSR 的构建目标目录中存在旧 VSR DLL；请改用空输出目录。")
     out.mkdir(parents=True, exist_ok=True)
     build = source / "build/portable"
     build.mkdir(parents=True, exist_ok=True)
@@ -58,9 +62,11 @@ def main():
         (build / "studio_vsr_sdk.h").write_text(
             '#pragma once\n#include <nvsdk_ngx_helpers.h>\n#include "' + helper.as_posix() + '"\n', encoding="utf-8")
         includes.insert(0, sdk / "include")
-        includes += [build]
         flags += ["/DSTUDIO_RTX_VIDEO_SDK"]
-    compile_shaders()
+    compile_shaders(build / "studio_shader_bytecode.h")
+    includes += [build]
+    if not args.runtime_shaders:
+        flags += ["/DSTUDIO_PRECOMPILED_SHADERS"]
     include_flags = ["/I" + str(path) for path in includes]
     shared = [source / "src" / (name + ".cpp") for name in (
         "common", "image", "gpu", "dlss", "cli", "pipeline", "nr", "optflow", "optflow_nvof", "nr_gpu_post", "vsr", "slprobe")]
@@ -83,8 +89,6 @@ def main():
                    extra=["/LD"], link=["kernel32.lib"])
     if args.rtx_video_sdk:
         shutil.copy2(runtime, out / "nvngx_vsr.dll")
-    elif (out / "nvngx_vsr.dll").exists():
-        raise RuntimeError("无 VSR 的构建目标目录中存在旧 VSR DLL；请改用空输出目录。")
     if args.tests:
         post_test = source / "tests/nr_post_tests.cpp"
         if post_test.is_file():

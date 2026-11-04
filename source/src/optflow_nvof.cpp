@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <vector>
+#ifdef STUDIO_PRECOMPILED_SHADERS
+#include "studio_shader_bytecode.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // Two small compute passes bracket the hardware call: colour(cur) is downscaled and packed to
@@ -92,16 +95,22 @@ void CSMain(uint3 t : SV_DispatchThreadID) {
 
 ComPtr<ID3D12PipelineState> CompilePso(ID3D12Device* dev, ID3D12RootSignature* sig,
                                        const char* src, const char* name) {
+    D3D12_SHADER_BYTECODE bytecode{};
+#ifdef STUDIO_PRECOMPILED_SHADERS
+    if(!strcmp(name,"color"))bytecode={StudioShader::nvof_color,sizeof(StudioShader::nvof_color)};
+    else if(!strcmp(name,"motion"))bytecode={StudioShader::nvof_motion,sizeof(StudioShader::nvof_motion)};
+    else throw ToolError("unknown embedded optical-flow shader");
+#else
     ComPtr<ID3DBlob> cs, err;
     HRESULT hr = D3DCompile(src, strlen(src), name, nullptr, nullptr, "CSMain", "cs_5_0",
                             D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &cs, &err);
     if (FAILED(hr))
         throw ToolError(std::string("nvof ") + name + ": " +
                         (err ? static_cast<const char*>(err->GetBufferPointer()) : HrToString(hr)));
+    bytecode={cs->GetBufferPointer(),cs->GetBufferSize()};
+#endif
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-    pd.pRootSignature = sig;
-    pd.CS.pShaderBytecode = cs->GetBufferPointer();
-    pd.CS.BytecodeLength = cs->GetBufferSize();
+    pd.pRootSignature = sig;pd.CS=bytecode;
     ComPtr<ID3D12PipelineState> pso;
     CHECK_HR(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)));
     return pso;

@@ -1762,8 +1762,8 @@ static int RunNeuralRenderingVideoLegacy(const std::string& dllDir, int adapter,
     failed=failed||ioFailed.load();
     std::fprintf(stderr,"NRTRANSFER {\"upload_allocations\":%llu,\"readback_allocations\":%llu,\"fence_waits\":%llu}\n",
         gpu.UploadAllocationCount(),gpu.ReadbackAllocationCount(),gpu.FenceWaitCount());
-    std::fprintf(stderr,"NRMETRIC {\"version\":1,\"timing_kind\":\"synchronized_wall\",\"frames\":%lld,\"reset_count\":%llu,\"initialization_ms\":%.3f,\"wall_ms\":%.3f,\"stage_ms\":{\"upload_upscale\":%.3f,\"flow\":%.3f,\"nr\":%.3f,\"composite\":%.3f,\"readback\":%.3f},\"gpu_stage_ms\":{\"nr\":%.3f,\"composite\":%.3f}}\n",
-        frames,resetCount,initializationMs,timeMs(totalStart),uploadMs,flowMs,nrMs,composeMs,readbackMs,gpuNrMs,gpuCompositeMs);
+    std::fprintf(stderr,"NRMETRIC {\"version\":1,\"timing_kind\":\"synchronized_wall\",\"frames\":%lld,\"nr_evaluated_frames\":%lld,\"reset_count\":%llu,\"initialization_ms\":%.3f,\"wall_ms\":%.3f,\"stage_ms\":{\"upload_upscale\":%.3f,\"flow\":%.3f,\"nr\":%.3f,\"composite\":%.3f,\"readback\":%.3f},\"gpu_stage_ms\":{\"nr\":%.3f,\"composite\":%.3f}}\n",
+        frames,motionVis?0LL:frames,resetCount,initializationMs,timeMs(totalStart),uploadMs,flowMs,nrMs,composeMs,readbackMs,gpuNrMs,gpuCompositeMs);
 
     const double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     fwd.release(feature);
