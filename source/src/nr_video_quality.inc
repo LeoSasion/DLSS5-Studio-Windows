@@ -22,11 +22,19 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
         throw ToolError("video output exceeds the supported resource budget");
     const unsigned nW=std::max(1u,static_cast<unsigned>(std::lround(tW*post.renderScale)));
     const unsigned nH=std::max(1u,static_cast<unsigned>(std::lround(tH*post.renderScale)));
+    GpuContext gpu;gpu.Initialize(false,adapter);
+    NgxSession ngx;
+    // Upscaling needs an NGX session even on a pure model-cache replay.
+    if(tW!=inW||tH!=inH)ngx.Init(gpu.Device(),DefaultDllSearchPaths(dllDir),verbose);
+    auto vsr=std::make_unique<VideoVsr>(gpu,ngx,inW,inH,tW,tH,
+        post.pixelFormat=="rgba"&&!signalHdr&&!hdr);
     uint64_t signature=NrVideoCache::Hash(post.cacheKey.data(),post.cacheKey.size());
     const unsigned identity[]={inW,inH,tW,tH,nW,nH,model.preset,model.style,model.autoMask,
         model.uiCorrection,static_cast<unsigned>(motionOn),static_cast<unsigned>(motionEngine),srPreset,static_cast<unsigned>(hdr)};
     const float controls[]={model.intensity,model.localStructure,model.localTone,model.skinStructure,model.globalTone};
     signature=NrVideoCache::Hash(identity,sizeof(identity),signature);
+    const uint32_t algorithm[]={5,static_cast<uint32_t>(vsr->Available())};
+    signature=NrVideoCache::Hash(algorithm,sizeof(algorithm),signature);
     signature=NrVideoCache::Hash(controls,sizeof(controls),signature);
     signature=NrVideoCache::Hash(post.transfer.data(),post.transfer.size(),signature);
     signature=NrVideoCache::Hash(post.primaries.data(),post.primaries.size(),signature);
@@ -39,9 +47,7 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     const bool replay=cache&&cache->Replay();
     if(replay)LogInfo("NR cache: complete model stage hit (no NR initialization/evaluation)");
     LogInfo("video quality: %ux%u -> %ux%u, NR %ux%u, raw %s, transfer %s",inW,inH,tW,tH,nW,nH,post.pixelFormat.c_str(),post.transfer.c_str());
-    GpuContext gpu;gpu.Initialize(false,adapter);
-    NgxSession ngx;
-    if(!replay||tW!=inW||tH!=inH)ngx.Init(gpu.Device(),DefaultDllSearchPaths(dllDir),verbose);
+    if(!replay&&!ngx.Initialized())ngx.Init(gpu.Device(),DefaultDllSearchPaths(dllDir),verbose);
     auto* caps=ngx.CapabilityParams();
     ForwarderApi fwd;
     const auto snippet=std::filesystem::absolute(Narrow2Widen(dllDir+"/nvngx_dlssnr.dll")).wstring();
@@ -49,7 +55,6 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     const auto appLen=GetEnvironmentVariableW(L"LOCALAPPDATA",appData,MAX_PATH);
     const std::wstring dataPath=(appLen>0&&appLen<MAX_PATH)?std::wstring(appData)+L"\\video2dlssnr":L".";
     GpuTexture color=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16B16A16_FLOAT,true,L"nrProxy");
-    GpuTexture proxyTex=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16B16A16_FLOAT,true,L"nrProxyLinear");
     GpuTexture depth=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R32_FLOAT,true,L"nrDepth");
     GpuTexture motion=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16_FLOAT,true,L"nrMotion");
     GpuTexture zeroMotion=gpu.CreateTexture(nW,nH,DXGI_FORMAT_R16G16_FLOAT,true,L"nrZeroMotion");
@@ -81,6 +86,8 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
         if(motionEngine!=2)nvofActive=nvof.Init(gpu,nW,nH,nW,nH);
         if(!nvofActive)flow.Init(gpu,nW,nH);
     }
+    NrGpuPost gpuPost(gpu,tW,tH,nW,nH,post);
+    LogInfo("post backend: GPU FP32 residual, cubic history, gain-compensated trust");
     const bool sixteen=post.pixelFormat=="rgba64le";
     const size_t inPixels=static_cast<size_t>(inW)*inH;
     const size_t inputBytes=inPixels*4*(sixteen?2:1);
@@ -97,9 +104,8 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
             std::vector<float> decode(levels);
             for(int i=0;i<levels;++i)decode[i]=NrPost::Decode(static_cast<float>(i)/(levels-1),post.transfer);
             std::vector<uint8_t> bytes(inputBytes);
-            std::vector<float> previous;
-            bool first=true;
-            const int gw=std::min<unsigned>(64,inW),gh=std::max(1,static_cast<int>(gw*inH/inW));
+            SceneHistory scenes;
+            const int gw=std::max(1,static_cast<int>(64ull*inW/std::max(inW,inH))),gh=std::max(1,static_cast<int>(64ull*inH/std::max(inW,inH)));
             while(true){
                 size_t got=0;
                 while(got<inputBytes){const size_t n=std::fread(bytes.data()+got,1,inputBytes-got,stdin);if(!n)break;got+=n;}
@@ -117,10 +123,7 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
                     const auto rgb=NrPost::Proxy({{frame.image.px[p],frame.image.px[p+1],frame.image.px[p+2]}},signalHdr,wide,p3);
                     gray[static_cast<size_t>(y)*gw+x]=NrPost::SrgbEncode(std::max(0.0f,NrPost::Luma(rgb)));
                 }
-                double difference=0;
-                if(!previous.empty())for(size_t i=0;i<gray.size();++i)difference+=std::fabs(gray[i]-previous[i]);
-                frame.reset=first||(!previous.empty()&&difference/gray.size()>.24);
-                first=false;previous=std::move(gray);
+                frame.reset=scenes.Update(gray,gw,gh,post.fps);
                 unpackNs.fetch_add(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now()-t).count()));
                 if(!inputQueue.push(std::move(frame)))break;
             }
@@ -138,28 +141,27 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     });
     double uploadMs=0,flowMs=0,nrMs=0,composeMs=0,readbackMs=0,gpuNrMs=0;
     uint64_t frames=0,resets=0,cachedFrames=0;
-    NrPost::TemporalCorrection temporal;
+
     bool failed=false;
     Frame frame;
     try {
         while(inputQueue.pop(frame)){
             if(ioFailed.load()){failed=true;break;}
             auto t=Clock::now();
-            ImageF anchor=(tW!=inW||tH!=inH)?UpscaleTo(gpu,ngx,srCache,frame.image,tW,tH,signalHdr||hdr,srPreset):std::move(frame.image);
-            auto proxy=NrPost::MakeProxy(anchor.px,signalHdr,wide,p3);
-            proxy=NrPost::Resize(proxy,tW,tH,nW,nH);
-            const uint64_t sourceHash=NrVideoCache::Hash(proxy.data(),proxy.size()*sizeof(float));
+            ImageF anchor=vsr->Available()?vsr->Upscale(frame.image):((tW!=inW||tH!=inH)?UpscaleTo(gpu,ngx,srCache,frame.image,tW,tH,signalHdr||hdr,srPreset):std::move(frame.image));
+            const uint64_t sourceHash=NrVideoCache::Hash(anchor.px.data(),anchor.px.size()*sizeof(float));
+            gpuPost.Prepare(anchor.px);
             if(!replay){
-                std::vector<float> encoded=proxy;
-                for(size_t i=0;i<encoded.size();i+=4)for(int c=0;c<3;++c)encoded[i+c]=NrPost::SrgbEncode(std::max(0.0f,encoded[i+c]));
-                gpu.UploadRgbaFloat(color,encoded);
+                gpu.Begin();
+                gpu.Transition(gpuPost.Proxy(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                gpu.Transition(color,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                gpu.RecordEncodeSrgb(gpuPost.Proxy(),color);gpu.EndAndWait();
             }
-            if(flowEnabled)gpu.UploadRgbaFloat(proxyTex,proxy);
             uploadMs+=elapsed(t);
             t=Clock::now();
             if(flowEnabled){
-                if(nvofActive)nvof.Compute(gpu,proxyTex,motion,frame.reset);
-                else {auto* cmd=gpu.Begin();flow.Record(cmd,proxyTex,motion,frame.reset);gpu.EndAndWait();}
+                if(nvofActive)nvof.Compute(gpu,gpuPost.Proxy(),motion,frame.reset);
+                else {auto* cmd=gpu.Begin();flow.Record(cmd,gpuPost.Proxy(),motion,frame.reset);gpu.EndAndWait();}
             }
             flowMs+=elapsed(t);
             std::vector<float> nrPixels;
@@ -176,31 +178,25 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
                 gpu.RecordTimestampEnd();gpu.EndAndWait();
                 nrMs+=elapsed(t);gpuNrMs+=gpu.LastGpuMs();
                 if(NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(result))){failed=true;LogErr("evaluate failed on frame %llu: 0x%08X",frames,static_cast<unsigned>(result));break;}
-                t=Clock::now();nrPixels=gpu.ReadbackRgbaFloat(output);readbackMs+=elapsed(t);
-                if(cache)cache->Write(sourceHash,nrPixels);
+                if(cache){t=Clock::now();nrPixels=gpu.ReadbackRgbaFloat(output);readbackMs+=elapsed(t);cache->Write(sourceHash,nrPixels);}
             }
             t=Clock::now();
-            std::vector<float> delta;
-            if(!motionVis)delta=NrPost::Correction(proxy,nrPixels);
-            std::vector<float> vectors;
-            if(post.stability>0||motionVis){
-                const auto readStart=Clock::now();vectors=gpu.ReadbackRg16Float(motion);readbackMs+=elapsed(readStart);
-            }
-            std::vector<float> result;
-            if(motionVis){
-                result=anchor.px;
+            std::vector<uint8_t> bytes;
+            if(motionVis) {
+                const auto vectors=gpu.ReadbackRg16Float(motion);
+                auto result=anchor.px;
                 const float maxMag=std::max(8.0f,nW/120.0f);
-                for(unsigned y=0;y<tH;++y)for(unsigned x=0;x<tW;++x){
+                for(unsigned y=0;y<tH;++y)for(unsigned x=0;x<tW;++x) {
                     const size_t i=(static_cast<size_t>(y)*tW+x)*4;
                     const float mx=NrPost::Sample(vectors,nW,nH,2,(x+.5f)*nW/tW-.5f,(y+.5f)*nH/tH-.5f,0);
                     const float my=NrPost::Sample(vectors,nW,nH,2,(x+.5f)*nW/tW-.5f,(y+.5f)*nH/tH-.5f,1);
                     result[i]=NrPost::Clamp01(.5f+mx/maxMag);result[i+1]=NrPost::Clamp01(.5f+my/maxMag);result[i+2]=NrPost::Clamp01(std::sqrt(mx*mx+my*my)/maxMag);
                 }
-            }else{
-                temporal.Stabilize(delta,proxy,vectors,nW,nH,frame.reset,post.stability,post.fps);
-                result=NrPost::Compose(anchor.px,tW,tH,delta,nW,nH,detail,colour,post);
+                bytes=NrPost::Pack(result,post);
+            } else {
+                if(replay)gpu.UploadRgbaFloat(output,nrPixels);
+                bytes=gpuPost.Process(anchor.px,output,motion,frame.reset,detail,colour);
             }
-            auto bytes=NrPost::Pack(result,post);
             composeMs+=elapsed(t);
             if(!outputQueue.push(std::move(bytes))){failed=true;break;}
             ++frames;if(frame.reset)++resets;
@@ -221,7 +217,7 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
         frames,cachedFrames,resets,initialization,wall,nW,nH,uploadMs,flowMs,nrMs,composeMs,readbackMs,unpackNs.load()/1e6,writeNs.load()/1e6,gpuNrMs);
     if(feature)fwd.release(feature);
     if(nvofActive)nvof.Shutdown();else if(flowEnabled)flow.Shutdown();
-    srCache.clear();ngx.Shutdown();
+    vsr.reset();srCache.clear();ngx.Shutdown();
     LogInfo("done: %llu frames in %.1f s (%.1f fps)",frames,(wall-initialization)/1000,frames/std::max(.001,(wall-initialization)/1000));
     return frames>0&&!failed?0:1;
 }
@@ -245,8 +241,10 @@ int RunNeuralRenderingVideo(const std::string& dllDir,int adapter,unsigned inW,u
             LogInfo("NR cache: not eligible (complete stage exceeds 1 GiB or diagnostic mode)");
         }
     }
-    if(!effective.Enabled())return RunNeuralRenderingVideoLegacy(dllDir,adapter,inW,inH,model,detail,colour,hdr,
-        scale,outWReq,outHReq,motionOn,motionVis,motionEngine,srPreset,verbose);
+    const bool tryVsr=VideoVsr::Built() && !hdr && post.transfer=="sdr" && post.pixelFormat=="rgba" &&
+        ((outWReq>inW)||(outHReq>inH)||(!outWReq&&!outHReq&&scale>1));
+    if(!effective.Enabled()&&!tryVsr)return RunNeuralRenderingVideoLegacy(dllDir,adapter,inW,inH,model,detail,colour,hdr,
+        scale,outWReq,outHReq,motionOn,motionVis,motionEngine,srPreset,verbose,post.fps);
     return RunVideoQuality(dllDir,adapter,inW,inH,model,detail,colour,hdr,scale,outWReq,outHReq,
         motionOn,motionVis,motionEngine,srPreset,verbose,effective);
 }

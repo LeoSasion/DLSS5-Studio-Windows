@@ -12,7 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "packaging" / "build"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--package", type=Path, default=BUILD / "DLSS-Studio-Portable")
-PACKAGE = parser.parse_args().package.resolve()
+parser.add_argument("--readme", type=Path, default=ROOT / "packaging/README-package.txt")
+args = parser.parse_args()
+PACKAGE = args.package.resolve()
 CACHE = ROOT / "packaging" / "cache"
 ARTIFACTS = ROOT / "outputs"
 for path in (BUILD, CACHE, ARTIFACTS):
@@ -68,7 +70,8 @@ for name in ("LICENSE", "THIRD-PARTY-NOTICES.md"):
     shutil.copy2(ROOT / name, PACKAGE / name)
 shutil.copy2(ROOT / "app/README.md", licenses / "video2dlssnr-README.md")
 shutil.copy2(ROOT / "source/THIRD-PARTY-engine-LICENSE.txt", licenses / "engine-MIT-LICENSE.txt")
-shutil.copy2(ROOT / "packaging/README-package.txt", PACKAGE / "使用说明.txt")
+shutil.copy2(args.readme, PACKAGE / "使用说明.txt")
+shutil.copy2(ROOT / "source/THIRD-PARTY-video-player-LICENSE.txt", licenses / "video-player-MIT-LICENSE.txt")
 tools = PACKAGE / "tools"
 tools.mkdir()
 for name in ("incremental_update.py", "components.py"):

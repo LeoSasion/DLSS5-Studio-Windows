@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 
-PIPELINE_VERSION = "studio-render-3-hdr-temporal-pts"
+PIPELINE_VERSION = "studio-render-4-motion-scene-gpu-post-vsr"
 
 
 def digest_json(value):
@@ -151,7 +151,8 @@ class RuntimeIdentity:
         runtime["file_version"] = windows_file_version(selection.dll_dir / "nvngx_dlssnr.dll")
         runtime["default_nr_preset"] = getattr(selection, "nr_preset", 0)
         identity = {"identity_schema": 1, "pipeline": PIPELINE_VERSION,
-                    "renderer": renderer, "media_tools": media_tools, "processing": pipeline,
+                    "renderer": renderer, "optional_vsr": self.file(self.root / "out/nvngx_vsr.dll"),
+                    "media_tools": media_tools, "processing": pipeline,
                     "runtime": runtime, "driver": drivers, "model": self.models(),
                     "gpu": {"luid": selection.luid, "profile": selection.profile,
                             "name": selection.name}}

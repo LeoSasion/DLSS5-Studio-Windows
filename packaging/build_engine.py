@@ -3,6 +3,8 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import shutil
+from compile_engine_shaders import compile_shaders
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tests", action="store_true")
     parser.add_argument("--out", type=Path, default=ROOT / "source/out")
+    parser.add_argument("--rtx-video-sdk", type=Path,
+                        help="Locally obtained NVIDIA RTX Video SDK root (optional)")
     args = parser.parse_args()
     compiler, env = portable_environment()
     source = ROOT / "source"
@@ -41,9 +45,25 @@ def main():
                                      "third_party/nvof", "src", "forwarder")]
     flags = ["/nologo", "/std:c++17", "/EHsc", "/W3", "/O2", "/MD", "/DNDEBUG",
              "/utf-8", "/D_CRT_SECURE_NO_WARNINGS"]
+    if args.rtx_video_sdk:
+        sdk = args.rtx_video_sdk.resolve()
+        helper = sdk / "include/nvsdk_ngx_helpers_vsr.h"
+        runtime = sdk / "bin/Windows/x64/rel/nvngx_vsr.dll"
+        if not helper.is_file() or not runtime.is_file():
+            raise RuntimeError("RTX Video SDK 缺少 VSR 官方头文件或运行库。")
+        # Check the original signature before allowing the runtime into a build.
+        command = "$s=Get-AuthenticodeSignature -LiteralPath $env:STUDIO_VSR_RUNTIME; if($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'NVIDIA'){exit 1}"
+        sdk_env = os.environ.copy(); sdk_env["STUDIO_VSR_RUNTIME"] = str(runtime)
+        subprocess.run(["powershell.exe", "-NoProfile", "-Command", command], check=True, env=sdk_env)
+        (build / "studio_vsr_sdk.h").write_text(
+            '#pragma once\n#include <nvsdk_ngx_helpers.h>\n#include "' + helper.as_posix() + '"\n', encoding="utf-8")
+        includes.insert(0, sdk / "include")
+        includes += [build]
+        flags += ["/DSTUDIO_RTX_VIDEO_SDK"]
+    compile_shaders()
     include_flags = ["/I" + str(path) for path in includes]
     shared = [source / "src" / (name + ".cpp") for name in (
-        "common", "image", "gpu", "dlss", "cli", "pipeline", "nr", "optflow", "optflow_nvof", "slprobe")]
+        "common", "image", "gpu", "dlss", "cli", "pipeline", "nr", "optflow", "optflow_nvof", "nr_gpu_post", "vsr", "slprobe")]
     ngx = source / "third_party/nvngx/lib/nvsdk_ngx_d.lib"
     if not ngx.is_file():
         raise RuntimeError("缺少 NVIDIA NGX import library。先运行 packaging/bootstrap_compiler.py。")
@@ -61,6 +81,10 @@ def main():
     compile_target("video2dlssnr.exe", shared + [source / "src/main.cpp"], link=libraries)
     compile_target("nvngx.dll_dlssnr.dll", [source / "forwarder/nvngx_fwd.cpp"],
                    extra=["/LD"], link=["kernel32.lib"])
+    if args.rtx_video_sdk:
+        shutil.copy2(runtime, out / "nvngx_vsr.dll")
+    elif (out / "nvngx_vsr.dll").exists():
+        raise RuntimeError("无 VSR 的构建目标目录中存在旧 VSR DLL；请改用空输出目录。")
     if args.tests:
         post_test = source / "tests/nr_post_tests.cpp"
         if post_test.is_file():

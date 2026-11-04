@@ -56,6 +56,7 @@ public:
     // assert on what the downsample pass actually wrote.
     std::vector<float> ReadbackR32Float(GpuTexture& tex);
     std::vector<float> ReadbackRg16Float(GpuTexture& tex);  // two floats per pixel
+    std::vector<uint8_t> ReadbackPackedRgba(GpuTexture& tex); // UINT RGBA8/16, raw little-endian
     std::vector<uint8_t> ReadbackRgba8(GpuTexture& tex);    // R8G8B8A8_UNORM, 4 bytes/pixel
 
     ID3D12GraphicsCommandList* Begin();

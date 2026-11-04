@@ -12,7 +12,7 @@ The build script uses the extracted Microsoft compiler/SDK and NVIDIA import lib
 
 ## Typed parameter ABI and NR model preset (2026-10-27)
 
-The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight model B; 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
+The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight, milder-output model B (not pixel-equivalent to A); 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
 
 NR creation writes `DLSSNR.Hint.Render.Preset` as an I32. All host capability setters use the SDK's typed Parameter_Set APIs, and the forwarder uses the header's typed virtual Set overloads. Image, default video and high-precision video perform a typed I32/UInt32/float round trip before creating NR; a mismatch fails explicitly. There is no vtable scan or guessed fallback.
 
@@ -42,7 +42,7 @@ The P3-D65 matrices were derived by multiplying the linear RGB/XYZ rational matr
 
 The existing model controls keep their previous ranges, including 0–200% controls and 0–100% color blending. `--nr-detail` and `--nr-color` are output composition controls; they do not change the model identity.
 
-The unchanged SDR/default route keeps GPU composition. High precision, HDR, protection, temporal stability and model-stage replay use the tested host composition route. Its additional CPU and readback costs are visible in metrics; it is not advertised as a universally faster path.
+The SDR/default route keeps its GPU composition. Since the 2026-11-05 development preview, high precision, HDR, protection, temporal stability and model-stage replay use GPU FP32 proxy/residual/composition with integer RGBA8/16 packing. Source pixels are uploaded once; proxy generation, model encoding and temporal motion remain on the device. Model-cache writes still read the raw model output back. This path has only source review and shader/native compilation, not runtime or performance validation. See VIDEO-QUALITY.md.
 
 ## Bounded stage reuse
 
@@ -50,7 +50,7 @@ Images: `--nr-cache-dir <directory>` alongside `--nr-run` writes a `.nrstage` wi
 
 Videos: pass all of `--nr-cache-dir <directory> --nr-cache-frames <N> --nr-cache-key <identity>`. The identity must cover source content, decoded geometry, the exact segment including warmup/reset policy, actual runtime/driver/model identity and native model/motion settings. It excludes detail/color/protection/stability and final encoding controls.
 
-The native header also binds model parameters, dimensions, motion, SR preset, transfer, raw format and primaries. Every frame binds the source proxy fingerprint and the stored NR payload checksum. Only complete model stages whose estimated size is at most 1 GiB are enabled. Native half-float NR output is stored; original full-resolution floating frames are not duplicated in this video cache. The caller still decodes the source and reconstructs the anchor and flow on replay.
+The native header also binds model parameters, dimensions, motion, SR preset, transfer, raw format and primaries. The 2026-11-05 algorithm identity binds scene/motion/proxy version 5 and the selected VSR/DLSS upscaler; every frame binds the full-resolution linear anchor fingerprint and the stored NR payload checksum. Only complete model stages whose estimated size is at most 1 GiB are enabled. Native half-float NR output is stored; original full-resolution floating frames are not duplicated in this video cache. The caller still decodes the source and reconstructs the anchor and flow on replay.
 
 The final marker is an atomic rename after every expected frame has completed. Incomplete stages are never replayed. Oversized stages fall back to normal processing. An identity or payload mismatch removes the invalid complete cache and returns an explicit `NR cache identity mismatch` failure. The caller can retry once without that cache. The native fingerprints detect mismatches and accidental corruption; the caller's SHA-based identity supplies the stronger content/runtime attribution.
 

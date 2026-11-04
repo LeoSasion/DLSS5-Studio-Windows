@@ -1,4 +1,5 @@
 #include "gpu.h"
+#include <cmath>
 
 #include <DirectXPackedVector.h>
 
@@ -694,7 +695,7 @@ ComPtr<ID3D12Resource> GpuContext::TransferBuffer(UINT64 bytes,bool readback) {
 }
 
 void GpuContext::UploadRgbaFloat(GpuTexture& tex, const std::vector<float>& rgba) {
-    CHECK(tex.fmt == DXGI_FORMAT_R16G16B16A16_FLOAT);
+    CHECK(tex.fmt == DXGI_FORMAT_R16G16B16A16_FLOAT || tex.fmt == DXGI_FORMAT_R32G32B32A32_FLOAT || tex.fmt == DXGI_FORMAT_R8G8B8A8_UNORM);
     CHECK(rgba.size() == static_cast<size_t>(tex.w) * tex.h * 4);
 
     D3D12_RESOURCE_DESC desc = tex.res->GetDesc();
@@ -712,7 +713,9 @@ void GpuContext::UploadRgbaFloat(GpuTexture& tex, const std::vector<float>& rgba
         uint16_t* dst = reinterpret_cast<uint16_t*>(mapped + fp.Offset +
                                                     static_cast<size_t>(y) * fp.Footprint.RowPitch);
         const float* src = rgba.data() + static_cast<size_t>(y) * tex.w * 4;
-        for (int i = 0; i < tex.w * 4; ++i) dst[i] = XMConvertFloatToHalf(src[i]);
+        if(tex.fmt==DXGI_FORMAT_R32G32B32A32_FLOAT) memcpy(dst,src,static_cast<size_t>(tex.w)*16);
+        else if(tex.fmt==DXGI_FORMAT_R8G8B8A8_UNORM) {auto* out=reinterpret_cast<uint8_t*>(dst);for(int i=0;i<tex.w*4;++i)out[i]=static_cast<uint8_t>(std::lround(std::clamp(src[i],0.0f,1.0f)*255));}
+        else for (int i = 0; i < tex.w * 4; ++i) dst[i] = XMConvertFloatToHalf(src[i]);
     }
     staging->Unmap(0, nullptr);
 
@@ -866,6 +869,15 @@ std::vector<uint8_t> GpuContext::ReadbackRgba8(GpuTexture& tex) {
                static_cast<size_t>(tex.w) * 4);
     }
     return out;
+}
+
+std::vector<uint8_t> GpuContext::ReadbackPackedRgba(GpuTexture& tex) {
+    CHECK(tex.fmt==DXGI_FORMAT_R8G8B8A8_UINT || tex.fmt==DXGI_FORMAT_R16G16B16A16_UINT);
+    const size_t row=static_cast<size_t>(tex.w)*(tex.fmt==DXGI_FORMAT_R16G16B16A16_UINT?8:4);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};auto bytes=ReadbackBytes(tex,&fp);
+    std::vector<uint8_t> result(row*tex.h);
+    for(int y=0;y<tex.h;++y)memcpy(result.data()+row*y,bytes.data()+fp.Offset+static_cast<size_t>(y)*fp.Footprint.RowPitch,row);
+    return result;
 }
 
 void GpuContext::RecordDownsample(const DownsampleArgs& a) {

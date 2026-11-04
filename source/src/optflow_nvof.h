@@ -63,4 +63,5 @@ private:
 
     int m_cur = 0;
     bool m_hasPrev = false;
+    bool m_resetHints = true;
 };

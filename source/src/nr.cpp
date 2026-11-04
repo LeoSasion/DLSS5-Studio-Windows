@@ -5,6 +5,9 @@
 #include "optflow.h"
 #include "optflow_nvof.h"
 #include "pipeline.h"
+#include "scene_history.h"
+#include "nr_gpu_post.h"
+#include "vsr.h"
 
 #include <windows.h>
 
@@ -1438,7 +1441,7 @@ private:
 static int RunNeuralRenderingVideoLegacy(const std::string& dllDir, int adapter, unsigned inW, unsigned inH,
                             const NrModelParams& model, float detail, float colour, bool hdr,
                             float scale, unsigned outWReq, unsigned outHReq, bool motionOn,
-                            bool motionVis, int motionEngine, unsigned srPreset, bool verbose) {
+                            bool motionVis, int motionEngine, unsigned srPreset, bool verbose, float fps) {
     using VideoClock=std::chrono::steady_clock;
     const auto totalStart=VideoClock::now();
     auto timeMs=[](VideoClock::time_point start){return std::chrono::duration<double,std::milli>(VideoClock::now()-start).count();};
@@ -1598,8 +1601,9 @@ static int RunNeuralRenderingVideoLegacy(const std::string& dllDir, int adapter,
         // Scene-cut detection on a tiny grey thumbnail: a big mean abs-diff between consecutive
         // frames (over 0.24 of full scale) means a cut, so NR history is reset rather than
         // dragged across it.
-        const int gw = 64, gh = std::max(1, 64 * static_cast<int>(inH) / static_cast<int>(inW));
-        std::vector<float> curGray(static_cast<size_t>(gw) * gh), prevGray;
+        const int gw=std::max(1,static_cast<int>(64ull*inW/std::max(inW,inH))), gh=std::max(1,static_cast<int>(64ull*inH/std::max(inW,inH)));
+        std::vector<float> curGray(static_cast<size_t>(gw) * gh);
+        SceneHistory scenes;
         long long fno = 0;
         while (true) {
             size_t got = std::fread(buf.data(), 1, inBytes, stdin);
@@ -1625,14 +1629,7 @@ static int RunNeuralRenderingVideoLegacy(const std::string& dllDir, int adapter,
                     curGray[static_cast<size_t>(y) * gw + x] =
                         (0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]) / 255.0f;
                 }
-            bool reset = (fno == 0);
-            if (!prevGray.empty()) {
-                double d = 0;
-                for (size_t i = 0; i < curGray.size(); ++i) d += std::fabs(curGray[i] - prevGray[i]);
-                if (d / curGray.size() > 0.24) reset = true;
-            }
-            prevGray = curGray;
-            vf.reset = reset;
+            vf.reset = scenes.Update(curGray,gw,gh,fps);
             ++fno;
             if (!qIn.push(std::move(vf))) break;
         }
