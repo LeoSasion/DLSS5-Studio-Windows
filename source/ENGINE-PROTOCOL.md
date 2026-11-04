@@ -12,7 +12,7 @@ The build script uses the extracted Microsoft compiler/SDK and NVIDIA import lib
 
 ## Typed parameter ABI and NR model preset (2026-10-27)
 
-The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight model B; 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
+The existing `--nr-preset` selects the NR creation hint; no additional UI or CLI is required. For the identified 310.9.16 runtimes, 1 selects legacy model A and 2 selects the lightweight, milder-output model B (not pixel-equivalent to A); 0 leaves selection automatic. This is independent of appearance style and the internal SR preset. Changing the hint requires a new feature, and the effective hint belongs in model/cache identity.
 
 NR creation writes `DLSSNR.Hint.Render.Preset` as an I32. All host capability setters use the SDK's typed Parameter_Set APIs, and the forwarder uses the header's typed virtual Set overloads. Image, default video and high-precision video perform a typed I32/UInt32/float round trip before creating NR; a mismatch fails explicitly. There is no vtable scan or guessed fallback.
 
@@ -42,7 +42,7 @@ The P3-D65 matrices were derived by multiplying the linear RGB/XYZ rational matr
 
 The existing model controls keep their previous ranges, including 0–200% controls and 0–100% color blending. `--nr-detail` and `--nr-color` are output composition controls; they do not change the model identity.
 
-The unchanged SDR/default route keeps GPU composition. High precision, HDR, protection, temporal stability and model-stage replay use the tested host composition route. Its additional CPU and readback costs are visible in metrics; it is not advertised as a universally faster path.
+The SDR/default route keeps its GPU composition. Since the 2026-11-05 development preview, high precision, HDR, protection, temporal stability and model-stage replay use GPU FP32 proxy/residual/composition with integer RGBA8/16 packing. Source pixels are uploaded once; proxy generation, model encoding and temporal motion remain on the device. Model-cache writes still read the raw model output back. This path has only source review and shader/native compilation, not runtime or performance validation. See VIDEO-QUALITY.md.
 
 ## Bounded stage reuse
 
@@ -50,7 +50,7 @@ Images: `--nr-cache-dir <directory>` alongside `--nr-run` writes a `.nrstage` wi
 
 Videos: pass all of `--nr-cache-dir <directory> --nr-cache-frames <N> --nr-cache-key <identity>`. The identity must cover source content, decoded geometry, the exact segment including warmup/reset policy, actual runtime/driver/model identity and native model/motion settings. It excludes detail/color/protection/stability and final encoding controls.
 
-The native header also binds model parameters, dimensions, motion, SR preset, transfer, raw format and primaries. Every frame binds the source proxy fingerprint and the stored NR payload checksum. Only complete model stages whose estimated size is at most 1 GiB are enabled. Native half-float NR output is stored; original full-resolution floating frames are not duplicated in this video cache. The caller still decodes the source and reconstructs the anchor and flow on replay.
+The native header also binds model parameters, dimensions, motion, SR preset, transfer, raw format and primaries. The 2026-11-05 algorithm identity binds scene/motion/proxy version 7, the selected VSR/DLSS upscaler, source FPS and the actual NVOFA/LK backend used for model motion; every frame binds the full-resolution linear anchor fingerprint and the stored NR payload checksum. Only complete model stages whose estimated size is at most 1 GiB are enabled. Native half-float NR output is stored; original full-resolution floating frames are not duplicated in this video cache. The caller still decodes the source and reconstructs the anchor and flow on replay.
 
 The final marker is an atomic rename after every expected frame has completed. Incomplete stages are never replayed. Oversized stages fall back to normal processing. An identity or payload mismatch removes the invalid complete cache and returns an explicit `NR cache identity mismatch` failure. The caller can retry once without that cache. The native fingerprints detect mismatches and accidental corruption; the caller's SHA-based identity supplies the stronger content/runtime attribution.
 
@@ -67,3 +67,16 @@ Reader and writer queues are bounded by frame memory. Truncated input, broken ou
 `tests/nr_post_tests.cpp` checks PQ reference points, HLG diffuse white, transfer round trips, more than 256 retained levels, P3 matrix reversibility, full-resolution anchor preservation, alpha, protection and temporal motion/disocclusion behavior. `tests/test_main.cpp` covers CLI validation and GPU resource/transfer behavior, including buffer reuse and one-fence producer/readback submission.
 
 Integration evidence is under `outputs/core-optimization-validation` and `outputs/optimization-video-2026-10-26` in the task workspace. GPU support and performance claims remain specific to the tested hardware, runtime, sample and settings; no cross-GPU or blanket 4K speedup is implied.
+
+
+2026-11-05 R2: native-size `--nr-detail 0` without motion visualization copies decoded raw frames directly, using at most 1 MiB of transfer memory and no GPU/NGX initialization. It reports `bypassed_nr_frames` and `nr_evaluated_frames: 0`. New engines report actual successful `nr_evaluated_frames` explicitly; callers retain a frames-minus-cache-minus-bypass fallback for old engines. This count includes pre-roll and excludes motion visualization. GPU post metrics include `gpu_stage_ms.composite` (compute only), while wall composite time includes synchronization and packed readback. Raw cache transfer now preserves FP16 payloads without float expansion; uncached frames do not calculate a source fingerprint. Packaged engines embed the six new post/flow shaders; `--runtime-shaders` selects source-build fallback compilation.
+
+## R2 review revision — 2026-11-05
+
+The application pipeline identity is `studio-render-6-fps-flow-bound-history`. Native model-stage identity includes source FPS because scene debounce and temporal evaluation depend on it. Automatic motion selection binds the backend that actually initialized, so a hardware-flow failure cannot replay predictions created with another motion backend. Stability-only flow remains a post control when model motion is disabled.
+
+Scene initialization resets history without starting the weak-cut debounce window. The next frame can therefore reset a genuine cut; actual cuts still debounce weak transient evidence. NVOFA owns its registered resources until shutdown and cleans partially initialized state before LK fallback. Fence bookkeeping advances only after a successful API submission.
+
+This revision was exercised on an NVIDIA RTX PRO 6000 Blackwell Workstation Edition, driver 591.86, signed NR 310.9.16.0, preset 2. Actual image/video NR, full/scaled GPU post paths, FP16 cache replay, FPS cache invalidation, RGBA8/16 passthrough (including truncated input rejection), PQ/HLG and LK execution passed. A 4-frame cache replay produced the same raw output SHA-256 as its fresh render. Full-frame HDR protection differed from the original by at most 1 LSB for PQ and 0 for HLG in the synthetic 16-bit fixture. These are functional and precision checks on short fixtures, not a general image-quality score or cross-GPU benchmark.
+
+The isolated desktop E2E also passed real upload, render/download, synchronized source/result playback, current-frame capture, clip offsets, narrow-window layout, 4K landscape/portrait *preview layout*, themes, history/presets, polling/submission recovery and service cleanup after close. The 4K preview checks do not represent a long 4K NR export test. NVIDIA VSR remains disabled without the official SDK.

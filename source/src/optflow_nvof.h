@@ -15,6 +15,10 @@
 
 class NvofFlow {
 public:
+    ~NvofFlow() { Shutdown(); }
+    NvofFlow() = default;
+    NvofFlow(const NvofFlow&) = delete;
+    NvofFlow& operator=(const NvofFlow&) = delete;
     bool Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH);
     void Shutdown();
 
@@ -25,6 +29,7 @@ public:
     bool Ok() const { return m_ok; }
 
 private:
+    bool InitImpl(GpuContext& gpu,int inW,int inH,int targetW,int targetH);
     void RunPass(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso, const GpuTexture& srv0,
                  const GpuTexture& srv1, const GpuTexture& uav, const void* constants);
     bool RegisterTex(GpuTexture& tex, NvOFGPUBufferHandle* outHandle);
@@ -63,4 +68,5 @@ private:
 
     int m_cur = 0;
     bool m_hasPrev = false;
+    bool m_resetHints = true;
 };

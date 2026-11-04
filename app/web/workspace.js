@@ -18,6 +18,9 @@
   function paginate() {
     if (!owner) return;
     const previousPage = page;
+    const focused = pagesHost.contains(document.activeElement) ? document.activeElement : null;
+    const selection = focused && typeof focused.selectionStart === 'number'
+      ? [focused.selectionStart, focused.selectionEnd, focused.selectionDirection] : null;
     pagesHost.replaceChildren(); pages = []; page = 0;
     const budget = Math.max(80, innerHeight - 190);
     let current;
@@ -29,7 +32,13 @@
       }
     }
     page = Math.min(previousPage, pages.length - 1);
+    const focusedPage = focused ? pages.findIndex(item => item.contains(focused)) : -1;
+    if (focusedPage >= 0) page = focusedPage;
     render();
+    if (focused?.isConnected && focused.getClientRects().length) {
+      focused.focus({preventScroll:true});
+      if (selection) focused.setSelectionRange(...selection);
+    }
   }
   function open(details) {
     if (dialog.open) return;
@@ -118,7 +127,12 @@
   dialog.querySelector('.previous').onclick = () => { page--; render(); };
   dialog.querySelector('.next').onclick = () => { page++; render(); };
   // Reflow when conditional codec / quality fields appear, or the window resizes.
-  dialog.addEventListener('change', () => requestAnimationFrame(paginate));
+  dialog.addEventListener('change', event => {
+    // Range values do not add/remove fields; rebuilding pages on every keyup
+    // detached the active slider and interrupted keyboard/pointer adjustment.
+    if (event.target.matches('input[type="range"]')) return;
+    requestAnimationFrame(paginate);
+  });
   window.addEventListener('resize', paginate);
   document.addEventListener('invalid', event => {
     if (dialog.contains(event.target)) {

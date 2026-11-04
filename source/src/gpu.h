@@ -48,6 +48,8 @@ public:
 
     // Uploads linear RGBA float data, converting to the texture's half format.
     void UploadRgbaFloat(GpuTexture& tex, const std::vector<float>& rgba);
+    void UploadRgbaHalf(GpuTexture& tex,const std::vector<uint16_t>& rgba);
+    std::vector<uint16_t> ReadbackRgbaHalf(GpuTexture& tex);
     // Reads a half-float RGBA texture back as linear RGBA float.
     std::vector<float> ReadbackRgbaFloat(GpuTexture& tex);
     // Fills an R32_FLOAT texture (used for the constant exposure input).
@@ -56,10 +58,12 @@ public:
     // assert on what the downsample pass actually wrote.
     std::vector<float> ReadbackR32Float(GpuTexture& tex);
     std::vector<float> ReadbackRg16Float(GpuTexture& tex);  // two floats per pixel
+    std::vector<uint8_t> ReadbackPackedRgba(GpuTexture& tex); // UINT RGBA8/16, raw little-endian
     std::vector<uint8_t> ReadbackRgba8(GpuTexture& tex);    // R8G8B8A8_UNORM, 4 bytes/pixel
 
     ID3D12GraphicsCommandList* Begin();
     void EndAndWait();
+    ID3D12GraphicsCommandList* CommandList() const { CHECK(m_listOpen);return m_list.Get(); }
 
     void Transition(GpuTexture& t, D3D12_RESOURCE_STATES to);
     void UavBarrier(GpuTexture& t);

@@ -52,3 +52,8 @@
 2026-10-26 在 RTX PRO 6000 Blackwell、591.86 驱动上的处理验证及 RTX 30 / 40 型号识别、编号、组件匹配测试属于旧 310.8 运行库历史，不能用于证明新版通过。本机系统驱动未变更；310.9.16.0 能否在 591.86 运行尚未确认，可能需要更高驱动。NVIDIA 初版产品 616.64 和 RTX Remix 产品 616.92 的基线不作为该 DLL 精确最低驱动要求。
 
 旧发布包及制作工作区中的旧 310.8 文件、回退记录保留；[v1.3.0 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.3.0) `DLSS-Studio-Windows-x64.zip` 仅包含当前两份 NR DLL，根目录旧备用 DLL 和历史备份不进入发行包。启动器按组件清单与转发 DLL 检查环境，构建采用单次已核对的组件清单快照。应用增量机制不替换模型，本次不提供模型增量包。界面继续区分“已匹配”和本次实际“已成功渲染”。
+
+
+## 2026-11-05 视频优化参考
+
+伪运动过滤、切镜策略、时序重采样及 VSR 适配参考 2600th/dlss5-video-player（https://github.com/2600th/dlss5-video-player）的 MIT 源码与公开报告，按本项目管线重新实现；原许可见 source/THIRD-PARTY-video-player-LICENSE.txt（便携包 licenses/video-player-MIT-LICENSE.txt）。未合入 Merserk 自定义许可代码或 ComfyUI GPL 代码。可选 NVIDIA RTX Video SDK 和运行库继续受 NVIDIA 自身条款约束；本轮基础预览不包含或启用 VSR。

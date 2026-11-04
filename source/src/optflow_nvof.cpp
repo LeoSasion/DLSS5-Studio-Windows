@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <vector>
+#ifdef STUDIO_PRECOMPILED_SHADERS
+#include "studio_shader_bytecode.h"
+#endif
 
 // ---------------------------------------------------------------------------
 // Two small compute passes bracket the hardware call: colour(cur) is downscaled and packed to
@@ -48,8 +51,16 @@ const char* kMotionHlsl = R"(
 cbuffer C : register(b0) { uint2 gDim; float2 gS; uint gReset; float gCostLo; float gCostHi; uint gPad; };
 Texture2D<int2>     gSrc  : register(t0);
 Texture2D<uint>     gCost : register(t1);
+Texture2D<float4> gCurrent : register(t2);
+Texture2D<float4> gPrevious : register(t3);
 RWTexture2D<float2> gDst  : register(u0);
 float2 tap(int2 p, int2 mx) { return float2(gSrc.Load(int3(clamp(p, int2(0,0), mx), 0))); }
+float luma(float3 c) { return dot(c,float3(.0722,.7152,.2126)); } // packed B,G,R
+float samplePrevious(float2 p,int2 mx) {
+    int2 a=int2(floor(p));float2 f=frac(p);
+    return lerp(lerp(luma(gPrevious.Load(int3(clamp(a,0,mx),0)).rgb),luma(gPrevious.Load(int3(clamp(a+int2(1,0),0,mx),0)).rgb),f.x),
+                lerp(luma(gPrevious.Load(int3(clamp(a+int2(0,1),0,mx),0)).rgb),luma(gPrevious.Load(int3(clamp(a+1,0,mx),0)).rgb),f.x),f.y);
+}
 [numthreads(8,8,1)]
 void CSMain(uint3 t : SV_DispatchThreadID) {
     if (t.x >= gDim.x || t.y >= gDim.y) return;
@@ -66,22 +77,40 @@ void CSMain(uint3 t : SV_DispatchThreadID) {
         float cost = float(gCost.Load(int3(ci, 0)));
         w = saturate((gCostHi - cost) / (gCostHi - gCostLo));
     }
-    gDst[t.xy] = float2(fl.x * gS.x, fl.y * gS.y) * w;
+    // A motion vector must explain the decoded pair better than standing still.
+    // Identical frames and ties emit zero instead of accumulating subpixel drift.
+    // Null-motion criterion: 2600th/dlss5-video-player (MIT), independently adapted.
+    uint2 sz;gCurrent.GetDimensions(sz.x,sz.y);int2 imax=int2(sz)-1;
+    float2 p=(float2(t.xy)+.5)*float2(sz)/float2(gDim)-.5;
+    float still=0,moved=0;float2 displacement=fl/32.0;
+    [unroll]for(int yy=-1;yy<=1;++yy)[unroll]for(int xx=-1;xx<=1;++xx) {
+        int2 q=clamp(int2(round(p))+int2(xx,yy),0,imax);
+        float here=luma(gCurrent.Load(int3(q,0)).rgb);
+        still+=abs(here-luma(gPrevious.Load(int3(q,0)).rgb));
+        moved+=abs(here-samplePrevious(float2(q)+displacement,imax));
+    }
+    gDst[t.xy] = still<=moved ? float2(0,0) : float2(fl.x*gS.x,fl.y*gS.y)*w;
 }
 )";
 
 ComPtr<ID3D12PipelineState> CompilePso(ID3D12Device* dev, ID3D12RootSignature* sig,
                                        const char* src, const char* name) {
+    D3D12_SHADER_BYTECODE bytecode{};
+#ifdef STUDIO_PRECOMPILED_SHADERS
+    if(!strcmp(name,"color"))bytecode={StudioShader::nvof_color,sizeof(StudioShader::nvof_color)};
+    else if(!strcmp(name,"motion"))bytecode={StudioShader::nvof_motion,sizeof(StudioShader::nvof_motion)};
+    else throw ToolError("unknown embedded optical-flow shader");
+#else
     ComPtr<ID3DBlob> cs, err;
     HRESULT hr = D3DCompile(src, strlen(src), name, nullptr, nullptr, "CSMain", "cs_5_0",
                             D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &cs, &err);
     if (FAILED(hr))
         throw ToolError(std::string("nvof ") + name + ": " +
                         (err ? static_cast<const char*>(err->GetBufferPointer()) : HrToString(hr)));
+    bytecode={cs->GetBufferPointer(),cs->GetBufferSize()};
+#endif
     D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};
-    pd.pRootSignature = sig;
-    pd.CS.pShaderBytecode = cs->GetBufferPointer();
-    pd.CS.BytecodeLength = cs->GetBufferSize();
+    pd.pRootSignature = sig;pd.CS=bytecode;
     ComPtr<ID3D12PipelineState> pso;
     CHECK_HR(dev->CreateComputePipelineState(&pd, IID_PPV_ARGS(&pso)));
     return pso;
@@ -98,8 +127,9 @@ bool NvofFlow::RegisterTex(GpuTexture& tex, NvOFGPUBufferHandle* outHandle) {
     rp.inputFencePoint.value = m_appVal;
     rp.hOFGpuBuffer = outHandle;
     rp.outputFencePoint.fence = m_ofaFence.Get();
-    rp.outputFencePoint.value = ++m_ofaVal;
+    rp.outputFencePoint.value = m_ofaVal+1;
     NV_OF_STATUS s = m_api.nvOFRegisterResourceD3D12(m_hOF, &rp);
+    if(s==NV_OF_SUCCESS)m_ofaVal=rp.outputFencePoint.value;
     return s == NV_OF_SUCCESS && *outHandle != nullptr;
 }
 
@@ -111,6 +141,14 @@ void NvofFlow::WaitFence(ID3D12Fence* fence, uint64_t value) {
 }
 
 bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH) {
+    Shutdown();
+    try {
+        const bool ready=InitImpl(gpu,inW,inH,targetW,targetH);
+        if(!ready)Shutdown();
+        return ready;
+    } catch(...) {Shutdown();throw;}
+}
+bool NvofFlow::InitImpl(GpuContext& gpu,int inW,int inH,int targetW,int targetH) {
     m_device = gpu.Device();
     m_queue = gpu.Queue();
     m_inW = inW;
@@ -118,11 +156,12 @@ bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH)
     m_tW = targetW;
     m_tH = targetH;
 
-    m_dll = LoadLibraryW(L"nvofapi64.dll");
+    if(!m_dll)m_dll = LoadLibraryW(L"nvofapi64.dll");
     if (!m_dll) return false;
     auto create = reinterpret_cast<PfnCreateInstanceD3D12>(
         GetProcAddress(m_dll, "NvOFAPICreateInstanceD3D12"));
     if (!create) return false;
+    m_api={};
     if (create(NV_OF_API_VERSION, &m_api) != NV_OF_SUCCESS) return false;
     if (!m_api.nvCreateOpticalFlowD3D12 || !m_api.nvOFInit || !m_api.nvOFExecuteD3D12 ||
         !m_api.nvOFRegisterResourceD3D12)
@@ -211,7 +250,7 @@ bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH)
         // Compute plumbing: root constants + table [1 SRV, 1 UAV].
         D3D12_DESCRIPTOR_RANGE ranges[2]{};
         ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        ranges[0].NumDescriptors = 2;
+        ranges[0].NumDescriptors = 4;
         ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
         ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
         ranges[1].NumDescriptors = 1;
@@ -253,7 +292,7 @@ bool NvofFlow::Init(GpuContext& gpu, int inW, int inH, int targetW, int targetH)
 void NvofFlow::RunPass(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso,
                        const GpuTexture& srv0, const GpuTexture& srv1, const GpuTexture& uav,
                        const void* constants) {
-    // Fixed table: SRV t0 @0, SRV t1 @1, UAV u0 @2.
+    // Fixed table: flow, cost, current input, previous input, then output.
     auto cpu = [&](int i) {
         D3D12_CPU_DESCRIPTOR_HANDLE h = m_heap->GetCPUDescriptorHandleForHeapStart();
         h.ptr += static_cast<SIZE_T>(i) * m_descSize;
@@ -265,12 +304,15 @@ void NvofFlow::RunPass(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso,
     sd.Texture2D.MipLevels = 1;
     sd.Format = srv0.fmt;
     m_device->CreateShaderResourceView(srv0.res.Get(), &sd, cpu(0));
-    sd.Format = srv1.fmt;
-    m_device->CreateShaderResourceView(srv1.res.Get(), &sd, cpu(1));
+    sd.Format = pso==m_psoMotion.Get() && !m_cost.res ? DXGI_FORMAT_R8_UINT : srv1.fmt;
+    m_device->CreateShaderResourceView(pso==m_psoMotion.Get() && !m_cost.res ? nullptr : srv1.res.Get(), &sd, cpu(1));
+    sd.Format=m_in[m_cur].fmt;
+    m_device->CreateShaderResourceView(m_in[m_cur].res.Get(),&sd,cpu(2));
+    m_device->CreateShaderResourceView(m_in[m_cur^1].res.Get(),&sd,cpu(3));
     D3D12_UNORDERED_ACCESS_VIEW_DESC ud{};
     ud.Format = uav.fmt;
     ud.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    m_device->CreateUnorderedAccessView(uav.res.Get(), nullptr, &ud, cpu(2));
+    m_device->CreateUnorderedAccessView(uav.res.Get(), nullptr, &ud, cpu(4));
 
     ID3D12DescriptorHeap* heaps[] = {m_heap.Get()};
     cl->SetDescriptorHeaps(1, heaps);
@@ -283,6 +325,12 @@ void NvofFlow::RunPass(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso,
 
 void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion, bool reset) {
     GpuTexture& in = m_in[m_cur];
+    auto motionInputs=[&](bool readable) {
+        const auto state=readable?D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE:D3D12_RESOURCE_STATE_COMMON;
+        gpu.Transition(m_out,state);
+        if(m_cost.res)gpu.Transition(m_cost,state);
+        gpu.Transition(m_in[m_cur],state);gpu.Transition(m_in[m_cur^1],state);
+    };
 
     // 1) current colour -> OF input surface (downscaled, ABGR8), left in COMMON for the engine.
     {
@@ -306,10 +354,13 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
         c.dstW = static_cast<uint32_t>(m_tW);
         c.dstH = static_cast<uint32_t>(m_tH);
         c.reset = 1;
+        motionInputs(true);
         RunPass(cl, m_psoMotion.Get(), m_out, m_cost.res ? m_cost : m_out, motion, &c);
+        motionInputs(false);
         gpu.EndAndWait();
         m_cur ^= 1;
         m_hasPrev = true;
+        m_resetHints = true;
         return;
     }
 
@@ -317,7 +368,7 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
     NV_OF_EXECUTE_INPUT_PARAMS_D3D12 ei{};
     ei.inputFrame = m_hIn[m_cur];
     ei.referenceFrame = m_hIn[m_cur ^ 1];
-    ei.disableTemporalHints = NV_OF_FALSE;
+    ei.disableTemporalHints = m_resetHints ? NV_OF_TRUE : NV_OF_FALSE;
     NV_OF_FENCE_POINT inFp{m_appFence.Get(), m_appVal};
     ei.numFencePoints = 1;
     ei.fencePoint = &inFp;
@@ -325,11 +376,12 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
     NV_OF_EXECUTE_OUTPUT_PARAMS_D3D12 eo{};
     eo.outputBuffer = m_hOut;
     eo.outputCostBuffer = m_hCost;  // null when cost is unavailable
-    NV_OF_FENCE_POINT outFp{m_ofaFence.Get(), ++m_ofaVal};
+    NV_OF_FENCE_POINT outFp{m_ofaFence.Get(), m_ofaVal+1};
     eo.fencePoint = &outFp;
 
     NV_OF_STATUS s = m_api.nvOFExecuteD3D12(m_hOF, &ei, &eo);
     if (s != NV_OF_SUCCESS) {
+        m_resetHints = true;
         LogWarn("NVOFA execute failed (status %d); zeroing motion this frame", static_cast<int>(s));
         ID3D12GraphicsCommandList* cl = gpu.Begin();
         gpu.Transition(motion, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -337,17 +389,20 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
         c.dstW = static_cast<uint32_t>(m_tW);
         c.dstH = static_cast<uint32_t>(m_tH);
         c.reset = 1;
+        motionInputs(true);
         RunPass(cl, m_psoMotion.Get(), m_out, m_cost.res ? m_cost : m_out, motion, &c);
+        motionInputs(false);
         gpu.EndAndWait();
         m_cur ^= 1;
         return;
     }
+    m_ofaVal=outFp.value;
+    m_resetHints = false;
 
     // 3) wait for the engine (GPU-side), then flow grid -> target-resolution motion.
     m_queue->Wait(m_ofaFence.Get(), m_ofaVal);
     {
         ID3D12GraphicsCommandList* cl = gpu.Begin();
-        gpu.Transition(m_out, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         gpu.Transition(motion, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         Consts c{};
         c.dstW = static_cast<uint32_t>(m_tW);
@@ -356,8 +411,9 @@ void NvofFlow::Compute(GpuContext& gpu, GpuTexture& curColor, GpuTexture& motion
         c.sy = static_cast<float>(m_tH) / m_inH / 32.0f;
         // Confidence gate disabled (costLo==costHi==0 -> shader keeps every vector). The cost
         // buffer is still produced by the engine; re-enable by setting c.costLo/c.costHi.
+        motionInputs(true);
         RunPass(cl, m_psoMotion.Get(), m_out, m_cost.res ? m_cost : m_out, motion, &c);
-        gpu.Transition(m_out, D3D12_RESOURCE_STATE_COMMON);
+        motionInputs(false);
         gpu.EndAndWait();
     }
     m_cur ^= 1;
@@ -408,6 +464,8 @@ void NvofFlow::Shutdown() {
     }
     // Do not FreeLibrary(nvofapi64.dll): the driver module keeps worker threads and unloading it
     // mid-process access-violates. Leaking the handle for the life of the process is harmless.
-    m_dll = nullptr;
     m_ok = false;
+    m_cur=0;m_hasPrev=false;m_resetHints=true;m_appVal=0;m_ofaVal=0;
+    m_costFmt=DXGI_FORMAT_UNKNOWN;m_grid=1;
+    m_device=nullptr;m_queue=nullptr;
 }
