@@ -1,10 +1,10 @@
-DLSS Studio v1.3.0 — Windows x64
-发布日期：2026-10-27。
-发布页：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.3.0
+DLSS Studio v1.4.0 — Windows x64
+发布日期：2026-11-05。
+发布页：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0
 完整包：DLSS-Studio-Windows-x64.zip
-下载：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.3.0/DLSS-Studio-Windows-x64.zip
+下载：https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip
 ZIP SHA-256：见附件校验文件 DLSS-Studio-Windows-x64.zip.sha256。
-本版包含本地处理优化、310.9.16.0运行库和发布审查修复；本次未运行测试、GPU处理或性能测量，等待人工反馈。NR更新不增加界面选项；没有模型增量包，请使用新的完整包。
+本版合入R2视频GPU后处理、传输与缓存优化，并修复切镜、运动后端清理及滑块焦点；保持现有操作流程。NR仍为310.9.16.0，请使用新的完整包。已在指定Blackwell机器完成真实GPU渲染、桌面E2E与回归，范围见文末。
 
 一、开始使用
 
@@ -14,9 +14,9 @@ ZIP SHA-256：见附件校验文件 DLSS-Studio-Windows-x64.zip.sha256。
 
 Python、依赖、FFmpeg 和处理引擎已内置，无需管理员权限，不需要另装 Python 或 pip。独立窗口使用 Microsoft WebView2；未安装时会询问是否通过包内微软引导组件安装，首次安装此组件需要联网。
 
-支持 Windows 10/11 x64，窗口使用 .NET Framework 4.6.2 或更高版本。神经渲染需要兼容的 NVIDIA 显卡与驱动；此包不安装或修改驱动。2026-10-26曾在RTX PRO 6000 Blackwell、591.86驱动上验证旧310.8运行库；本次310.9.16.0仅完成文件身份核对及引擎编译，按更新要求未运行测试或GPU处理，591.86是否能运行新版尚待人工反馈。新版可能需要更高驱动。NVIDIA初版DLSS 5产品使用616.64、RTX Remix 1.6.1使用616.92作为产品基线，二者都不是已核实的该DLL精确最低要求。RTX 30/40仍需对应实体卡反馈，不能据此承诺全部显卡或官方支持范围。
+支持 Windows 10/11 x64，窗口使用 .NET Framework 4.6.2 或更高版本。神经渲染需要兼容的 NVIDIA 显卡与驱动；此包不安装或修改驱动。本版在RTX PRO 6000 Blackwell、驱动591.86、原版NR 310.9.16.0上完成短样片真实渲染。该结果不是精确最低驱动要求；RTX 30/40实机及其他硬件仍待验证。
 
-本包RTX 30/40共用ShortFuse / OpenNR社区兼容库，RTX 50使用NVIDIA原版，均为310.9.16.0。默认采用较轻量的NR网络Preset B（值2），原有默认/自然/电影外观风格与参数含义保持不变。网络B与外观风格是独立设置，不新增选择界面；本次没有测量画质、速度或显存变化。
+本包RTX 30/40共用ShortFuse / OpenNR社区兼容库，RTX 50使用NVIDIA原版，均为310.9.16.0。默认采用较轻量的NR网络Preset B（值2），原有默认/自然/电影外观风格与参数含义保持不变。网络B与外观风格是独立设置，不新增选择界面；本次完成短样片功能与精度验证，没有跨显卡性能或主观画质保证。
 
 二、窗口、预览和参数版本
 
@@ -117,11 +117,11 @@ logs\desktop-server.log       服务日志
 
 2026-10-27运行库更新及发布审查完成了两份310.9.16.0 DLL的身份核对、源码静态审查及引擎/转发DLL编译。原生NGX参数调用改用SDK正式类型，替换对虚函数表的猜测；依据包括同编译器汇编及SDK静态库反汇编。这些是静态接口与编译证据，不是GPU运行验证。
 
-本次未运行自动化测试、GPU测试、性能测试或新版完整包运行验证，效果与兼容性等待人工反馈，不以旧结果保证新版稳定性。
+2026-11-05的v1.4.0已通过Python 90项、前端状态9项和切镜C++回归，以及真实图片、48帧视频、完整/75%推理尺寸、缓存复用、RGBA8/16零细节直通、PQ/HLG 16-bit与NVOFA/LK执行验证。独立桌面E2E完成上传、渲染、下载、同步对比、当前帧捕获、小窗口、主题、历史及请求恢复；工作台脚本完成32项检查。
 
-以下均为2026-10-26旧310.8运行库的历史记录，不能作为310.9.16.0通过验证的依据：90项Python与9项Node回归，以及SDR8/16 bit、PQ/HLG、P3-D65、模型缓存后重合成、真实视频暂停重开接续、PTS和媒体封装、独立窗口玻璃最大化还原、真实上传/增强/对比/下载。历史指定16 bit原始样片在细节强度0时逐样本一致；有损编码导出不作逐样本一致承诺。
+本次下载短样片独立核对为320×180、24 fps、48帧、2秒、10-bit AV1与AAC音轨。本机NVENC不可用时自动选择CPU AV1。4K横竖仅验证预览布局，未完成长4K NR导出、RTX 30/40实机或主观画质评测。VSR缺少官方SDK，仍未启用。
 
-上述旧运行库的640×360、60帧原始引擎对照中，排除初始化的稳定吞吐：运动补偿开约提升22.6%，关约27.3%，输出字节一致。仅针对当时机器与样片，不外推新运行库、4K、完整导出或其他硬件。
+原始RGBA8/16零细节直通逐字节保留解码帧；有损编码导出不作逐字节一致承诺。PQ/HLG全画面保护在合成16-bit样片上最大误差为1/0个量化级。模型缓存复用避免重复NR推理，但解码、合成、编码仍有开销。
 
 源码位置：app\web、app\studio_server.py、launcher-source\DesktopShell.cs、launcher-source\StudioService.cs；第三方说明：licenses\；文件SHA-256清单：manifest.json。该清单用于完整性核对，不是数字签名。更详细源码与验证记录见项目中的使用说明.md、source\ENGINE-PROTOCOL.md和outputs\本轮证据目录。
 
