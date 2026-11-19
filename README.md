@@ -1,18 +1,42 @@
-# DLSS Studio v1.4.0
+# DLSS Studio
 
 面向 Windows 的本地 DLSS 图片与视频增强工作台，提供中文界面、深浅主题和无边框独立窗口。
 
-**[下载 Windows x64 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip)** · [v1.4.0 更新说明](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0) · [SHA-256 校验文件](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip.sha256)
+**[下载 v1.5.0-preview.1 Windows x64](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.5.0-preview.1/DLSS-Studio-v1.5.0-preview.1-Windows-x64.zip)** · [预览版说明](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1) · [预览包 SHA-256](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.5.0-preview.1/DLSS-Studio-v1.5.0-preview.1-Windows-x64.zip.sha256) · [正式版 v1.4.0](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0)
 
 ## 快速使用
 
-1. 下载 `DLSS-Studio-Windows-x64.zip`，完整解压到可写文件夹；请保留整个目录，不要直接在 ZIP 中运行。
+1. 下载 Windows x64 完整包，完整解压到可写文件夹；请保留整个目录，不要直接在 ZIP 中运行。
 2. 双击 `DLSS Studio.exe`。Python、依赖、FFmpeg 和处理引擎已内置，无需另装 Python。
 3. 上传图片或视频，选择尺寸、风格和强度，点击“开始处理”；在预览中比较并下载结果。
 
 需要 Windows 10/11 x64、兼容的 NVIDIA 显卡与驱动。独立窗口使用 Microsoft WebView2，缺少时可通过包内微软引导组件联网安装。从旧版升级请解压到新目录并保留旧包。
 
-v1.4.0 合入已验证的 R2 视频优化与审查修订：GPU 高精度后处理、减少重复传输与纹理复制、零细节直通、模型缓存复用，以及切镜、运动后端清理和参数焦点修复。NR 运行库保持 **310.9.16.0**。已在 RTX PRO 6000 Blackwell、驱动 591.86 上完成真实 GPU 渲染、桌面 E2E 和回归；具体范围与限制见下文。
+v1.5.0-preview.1 恢复 NVENC 硬件编码与编码失败后的自动回退，减少视频增强的 GPU 等待，并接入可选的 NVIDIA Maxine 超分与补帧。NR 运行库保持 **310.9.16.0**。旧的 v1.4.0 继续作为正式版。
+
+## 使用 NVIDIA 超分和补帧
+
+预览 ZIP 可直接运行原有增强和视频导出。**Maxine VSR/VFG 和 FRUC 运行组件需单独准备，预览包不包含它们。** 已具备兼容驱动时，添加 Maxine 无需另装 Python 或修改系统环境变量。
+
+1. 关闭工作台，从 [NVIDIA VFX 官方索引](https://pypi.nvidia.com/nvidia-vfx/) 下载 `nvidia_vfx-0.2.0.0-cp310-cp310-win_amd64.whl`。从 PyPI 下载 [CuPy CUDA 12 13.6.0](https://pypi.org/project/cupy-cuda12x/13.6.0/#files) 的 `cupy_cuda12x-13.6.0-cp310-cp310-win_amd64.whl` 和 [fastrlock 0.8.3](https://pypi.org/project/fastrlock/0.8.3/#files) 的 `fastrlock-0.8.3-cp310-cp310-win_amd64.whl`。
+2. 将三个 `.whl` 放在解压后的预览包根目录（与 `DLSS Studio.exe` 同级），在这个目录打开 PowerShell，用包内 Python 解压：
+
+   ```powershell
+   .\runtime\python.exe -m zipfile -e .\nvidia_vfx-0.2.0.0-cp310-cp310-win_amd64.whl .\app\out\nvidia-vfx
+   .\runtime\python.exe -m zipfile -e .\cupy_cuda12x-13.6.0-cp310-cp310-win_amd64.whl .\app\out\nvidia-vfx
+   .\runtime\python.exe -m zipfile -e .\fastrlock-0.8.3-cp310-cp310-win_amd64.whl .\app\out\nvidia-vfx
+   ```
+
+3. 重新打开工作台。**超分：** 上传 SDR 视频，选择比源片更大的输出尺寸，例如 720p → 1080p；素材匹配时会自动启用 VSR High，无需单独勾选。原尺寸、缩小及不适用的素材沿用原流程。任务日志会标明使用的超分方式。
+4. **补帧：** 在视频设置的「媒体与时间」勾选「补帧 ×2」，再点「开始处理」。默认关闭。支持的 SDR 恒定帧率视频可从 24 fps → 48 fps 或 30 fps → 60 fps，片长和音轨时间线不变。缺少补帧组件时开关不可用；素材不适用时保留原帧率，并在任务详情提示。补帧会增加处理时间和临时磁盘占用。
+
+| 显卡 | 超分 | 补帧 ×2 与验证状态 |
+| --- | --- | --- |
+| RTX 50 | Maxine VSR High | Maxine VFG High；已在 RTX PRO 6000 Blackwell、驱动 591.86 验证 1080p / 4K SDR 短样片导出 |
+| RTX 40 | Maxine VSR High | Maxine VFG High；有官方硬件支持，尚未进行本项目的 RTX 40 实机验证 |
+| RTX 30 | Maxine VSR High 路径；尚未实机验证 | FRUC 开发预览，需另取官方 Optical Flow SDK 5.0.7 构建；**尚未用官方 SDK 构建或在 RTX 30 实机验证**。不支持把 VFG 当作 RTX 30 的备用方案 |
+
+HDR 和可变帧率没有纳入本轮补帧预览。RTX 30 的 FRUC 开发配置见[本地构建说明](packaging/README-nvidia-video.md)。
 
 ## 当前功能
 
@@ -32,9 +56,9 @@ v1.4.0 合入已验证的 R2 视频优化与审查修订：GPU 高精度后处�
 
 ## 获取与运行
 
-正式完整附件为：
+上方链接为当前预览包。正式版 v1.4.0 的完整附件为：
 
-- [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip)：包含当前 310.9.16.0 运行库的完整便携环境。
+- [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip)：包含 310.9.16.0 运行库的 v1.4.0 便携环境，不含预览版的超分或补帧入口。
 - [`DLSS-Studio-Windows-x64.zip.sha256`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip.sha256)：ZIP SHA-256，见附件校验文件。
 
 本次没有模型增量包。旧版应用增量工具不替换模型 DLL，不能用旧应用增量包完成本次升级。GitHub 自动生成的 Source code 压缩包只有源码，不含可直接运行的完整环境。
@@ -78,7 +102,7 @@ RTX 50 文件从 [LoreanXavier 镜像](https://github.com/LoreanXavier/pt-dlss5-
 
 ## 编码与 HDR 边界
 
-默认 MP4：Windows 10 选 H.264，Windows 11 选 AV1；逐项实测 NVENC，不可用时采用同格式 CPU 编码。推荐码率 1080p 及以下 6 Mbps、1440p 9 Mbps、4K 12 Mbps，保留恒定画质与自定义选项。
+默认 MP4：Windows 10 选 H.264，Windows 11 选 AV1；程序启动时探测对应 NVENC，不可用则选 CPU。预览版中，实际导出遇到硬件编码器故障会自动重试并复用已增强片段：H.264 → CPU H.264，AV1 → CPU AV1，HEVC → MP4/MKV 内的 CPU AV1 或 MOV 内的 ProRes。任务详情会显示实际结果。推荐码率 1080p 及以下 6 Mbps、1440p 9 Mbps、4K 12 Mbps，保留恒定画质与自定义选项。
 
 PQ/HLG 视频自动使用 16 bit RGBA 原始帧，在浮点线性域构造模型代理并回加增强差值，不依赖旧“HDR 线性色彩”复选框。支持 BT.709、BT.2020、P3-D65；未知 HDR 色域明确记录按 BT.2020，其他未验证已知色域会提示。SDR 代理沿用现有 sRGB 近似，不宣称逐片母版校准。
 
@@ -96,7 +120,7 @@ HDR 选支持的 10 bit 编码或高精度母版格式；H.264 导出明确映�
 
 应用增量机制仍只更新应用、界面、启动器和渲染程序，不覆盖媒体、设置、模型、Python 或 FFmpeg，因此本次不提供模型增量包。`tools/components.py` 仍可列出、本地校验导入与回退已有组件，不联网下载。操作与数据位置见 [包内说明源码](packaging/README-package.txt)；人工使用遇到失败时可提供日志与复制诊断的信息。
 
-## 本次发布审查修复
+## v1.4.0 发布审查修复
 
 - 移除发行包中的旧 310.8 根目录备用 DLL；启动器改按组件清单与转发 DLL 检查环境。
 - 打包使用单次已核对的组件清单快照，复制并校验快照中的对应文件，避免并发变更混入不同版本。
@@ -109,7 +133,7 @@ HDR 选支持的 10 bit 编码或高精度母版格式；H.264 导出明确映�
 
 本版完整包已包含这些改动，合并记录见 [PR #1](https://github.com/LeoSasion/DLSS5-Studio-Windows/pull/1)。R2 审查修订已在 RTX PRO 6000 Blackwell、驱动 591.86、原版 NR 310.9.16.0 上完成真实图片/视频 GPU 渲染及独立桌面 E2E。验证范围限于下述短样片与功能，不承诺跨显卡兼容性、普遍提速比例或与旧 CPU 路径逐字节相同。
 
-RTX VSR 已提供条件构建适配代码和 `--rtx-video-sdk` 入口，但本地缺少需 NVIDIA 开发者登录下载的官方 SDK，带 SDK 的分支尚未编译或运行，当前预览未启用 VSR。接入范围限定 SDR 8-bit 视频放大，HDR/高位深继续现有路径。310.9.16 Network B 更轻量且输出更温和，不将其描述为与 A 画面相同的无损提速。
+当时的 RTX VSR 条件构建路径（`--rtx-video-sdk`）未启用。v1.5.0-preview.1 的独立 Maxine VSR/VFG 路径见上方使用说明。310.9.16 Network B 更轻量且输出更温和，不将其描述为与 A 画面相同的无损提速。
 
 第二轮 R2 加入原尺寸 `detail=0` 原始帧直通、后处理批量提交、FP32 纹理轮换、FP16 缓存直接传输与六个相关着色器预编译。未启用模型缓存时跳过整帧缓存指纹；NR 日志明确区分推理、缓存和直通。新增 GPU 后处理耗时统计。原有强度和尺寸含义不变，仍不新增界面选项。
 
@@ -149,7 +173,7 @@ Copy-Item source/out/nvngx.dll_dlssnr.dll app/out/nvngx.dll_dlssnr.dll
 
 构建脚本拒绝覆盖非空暂存目录；已有目录请换新路径。打包会获取固定 WebView2 SDK 并验证微软引导安装器签名。上述命令是构建说明，不代表本次运行库已通过运行测试。历史测试媒体与大型验证输出不进入发行 ZIP。
 
-## 历史验证与本次限制
+## 历史验证与限制
 
 2026-11-05 的 v1.4.0 在原版 NR 310.9.16.0 上完成了上述真实 GPU 与桌面 E2E 验证；Python 90 项、前端状态 9 项及切镜 C++ 回归通过。完整包从已验证代码和同一处理引擎生成，逐文件校验后发布。尚未完成 RTX 30/40 实机、长视频或长 4K NR 性能对比，不能从短样片结果推导普遍提速或主观画质保证。
 

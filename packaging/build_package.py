@@ -54,7 +54,8 @@ with zipfile.ZipFile(embedded) as archive:
     archive.extractall(runtime)
 (runtime / "python310._pth").write_text("python310.zip\n.\nLib\nLib/site-packages\n../app\nimport site\n", encoding="utf-8")
 ignore = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo")
-shutil.copytree(ROOT / "app/.venv/Lib/site-packages", runtime / "Lib/site-packages", ignore=ignore)
+shutil.copytree(ROOT / "app/.venv/Lib/site-packages", runtime / "Lib/site-packages",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "*.whl"))
 # Python's embedded distribution omits distutils, used by some installed packages.
 base = Path(json.loads(subprocess.check_output([str(ROOT / "app/.venv/Scripts/python.exe"), "-c", "import sys,json;print(json.dumps(sys.base_prefix))"], text=True)))
 shutil.copytree(base / "Lib/distutils", runtime / "Lib/distutils", ignore=ignore)
