@@ -2,7 +2,7 @@
 
 面向 Windows 的本地 DLSS 图片与视频增强工作台，提供中文界面、深浅主题和无边框独立窗口。
 
-**[下载 v1.5.0-preview.1 Windows x64](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.5.0-preview.1/DLSS-Studio-v1.5.0-preview.1-Windows-x64.zip)** · [预览版说明](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1) · [预览包 SHA-256](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.5.0-preview.1/DLSS-Studio-v1.5.0-preview.1-Windows-x64.zip.sha256) · [正式版 v1.4.0](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0)
+**[v1.5.0-preview.1 Windows x64 更新包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1)** · [正式版 v1.4.0](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0)
 
 ## 快速使用
 
@@ -14,9 +14,21 @@
 
 v1.5.0-preview.1 恢复 NVENC 硬件编码与编码失败后的自动回退，减少视频增强的 GPU 等待，并接入可选的 NVIDIA Maxine 超分与补帧。NR 运行库保持 **310.9.16.0**。旧的 v1.4.0 继续作为正式版。
 
+### 安装 Windows 预览版
+
+1. 将 [v1.4.0 Windows x64 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip) 解压到一个新的可写目录，不覆盖日常使用的副本。
+2. 在 [预览版发布页](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1) 下载 `DLSS-Studio-v1.5.0-preview.1-Update.zip`，解压到刚准备的新目录，使 `apply-preview.py` 与 `DLSS Studio.exe` 同级。附件含 SHA-256 校验文件。
+3. 在该目录打开 PowerShell，运行以下命令。更新程序会先下载并校验固定版本的 FFmpeg，再应用预览文件。安装完成后，双击 `DLSS Studio.exe`。
+
+   ```powershell
+   .\runtime\python.exe .\apply-preview.py
+   ```
+
+若自动下载失败，可以从[固定 FFmpeg 构建](https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/tag/autobuild-2026-04-30-13-44)手动下载 `ffmpeg-N-124278-gcc3ca17127-win64-lgpl.zip`，再运行 `.untimepython.exe .apply-preview.py --ffmpeg-archive 'D:Downloadsfmpeg-N-124278-gcc3ca17127-win64-lgpl.zip'`，将路径换成文件的实际位置。
+
 ## 使用 NVIDIA 超分和补帧
 
-预览 ZIP 可直接运行原有增强和视频导出。**Maxine VSR/VFG 和 FRUC 运行组件需单独准备，预览包不包含它们。** 已具备兼容驱动时，添加 Maxine 无需另装 Python 或修改系统环境变量。
+更新后的便携版可直接运行原有增强和视频导出。**Maxine VSR/VFG 和 FRUC 运行组件需单独准备，更新包不包含它们。** 已具备兼容驱动时，添加 Maxine 无需另装 Python 或修改系统环境变量。
 
 1. 关闭工作台，从 [NVIDIA VFX 官方索引](https://pypi.nvidia.com/nvidia-vfx/) 下载 `nvidia_vfx-0.2.0.0-cp310-cp310-win_amd64.whl`。从 PyPI 下载 [CuPy CUDA 12 13.6.0](https://pypi.org/project/cupy-cuda12x/13.6.0/#files) 的 `cupy_cuda12x-13.6.0-cp310-cp310-win_amd64.whl` 和 [fastrlock 0.8.3](https://pypi.org/project/fastrlock/0.8.3/#files) 的 `fastrlock-0.8.3-cp310-cp310-win_amd64.whl`。
 2. 将三个 `.whl` 放在解压后的预览包根目录（与 `DLSS Studio.exe` 同级），在这个目录打开 PowerShell，用包内 Python 解压：
@@ -56,7 +68,7 @@ HDR 和可变帧率没有纳入本轮补帧预览。RTX 30 的 FRUC 开发配置
 
 ## 获取与运行
 
-上方链接为当前预览包。正式版 v1.4.0 的完整附件为：
+上方链接为当前预览更新包。正式版 v1.4.0 的完整附件为：
 
 - [`DLSS-Studio-Windows-x64.zip`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip)：包含 310.9.16.0 运行库的 v1.4.0 便携环境，不含预览版的超分或补帧入口。
 - [`DLSS-Studio-Windows-x64.zip.sha256`](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip.sha256)：ZIP SHA-256，见附件校验文件。
