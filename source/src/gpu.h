@@ -81,9 +81,9 @@ public:
     void RecordFlowVis(GpuTexture& motion, GpuTexture& dstU8, float maxMag);
 
     // GPU timestamps around whatever is recorded between the two calls.
-    void RecordTimestampBegin();
-    void RecordTimestampEnd();
-    double LastGpuMs() const { return m_lastGpuMs; }
+    void RecordTimestampBegin(unsigned slot = 0);
+    void RecordTimestampEnd(unsigned slot = 0);
+    double LastGpuMs(unsigned slot = 0) const { return m_lastGpuMs[slot]; }
     uint64_t UploadAllocationCount() const { return m_uploadAllocations; }
     uint64_t ReadbackAllocationCount() const { return m_readbackAllocations; }
     uint64_t FenceWaitCount() const { return m_waitCount; }
@@ -128,8 +128,9 @@ private:
     ComPtr<ID3D12QueryHeap> m_queryHeap;
     ComPtr<ID3D12Resource> m_queryReadback;
     uint64_t m_timestampFreq = 0;
-    bool m_timestampPending = false;
-    double m_lastGpuMs = 0.0;
+    static constexpr unsigned TimestampSlots = 2;
+    unsigned m_timestampCount = 0;
+    double m_lastGpuMs[TimestampSlots]{};
 
     std::string m_adapterName;
     size_t m_vramMB = 0;

@@ -17,12 +17,12 @@ function resultDirty(){
     if(clip===range.full||clip&&(Math.abs(range.start-output.settings.clip_start)>.000001||Math.abs(range.duration-output.settings.clip_duration)>.000001))return true;
   }
   if(state.mode==='video'&&output.job_kind!=='frame'){
-    keys.push('motion','motion_vis','motion_engine','codec','container','audio','stability','timing_mode','preserve_media');
+    keys.push('motion','motion_vis','motion_engine','codec','container','audio','stability','timing_mode','preserve_media','frame_interpolation');
     const codec=desired.codec;
     if(codec==='prores')keys.push('prores_profile');
     else if(codec!=='ffv1'){keys.push('cq','bitrate');if(!codec.startsWith('h264_'))keys.push('bit_depth');if(codec.endsWith('_nvenc'))keys.push('enc_preset')}
   }
-  const defaults={protect_region:[],protect_skin:0,protect_highlights:0,stability:0,render_scale:1,timing_mode:'preserve',preserve_media:true};
+  const defaults={protect_region:[],protect_skin:0,protect_highlights:0,stability:0,render_scale:1,timing_mode:'preserve',preserve_media:true,frame_interpolation:false};
   return keys.some(key=>desired[key]!==undefined&&JSON.stringify(desired[key])!==JSON.stringify(output.settings[key]??defaults[key]));
 }
 function refreshProduct(){

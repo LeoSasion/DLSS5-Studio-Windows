@@ -6,11 +6,13 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'app'))
 import render_engine as engine
 import nr_video
+import video_pipeline
 from studio_server import Settings, build_command
 
 
@@ -36,6 +38,30 @@ class VideoExportTests(unittest.TestCase):
             self.assertEqual(int(command[command.index('--bitrate')+1]),expected)
         self.assertEqual(Settings(asset_id='fixture',bitrate=0).bitrate_mode,'manual')
         self.assertEqual(Settings(asset_id='fixture').bitrate_mode,'auto')
+
+    def test_nvenc_failure_reencodes_the_same_segments(self):
+        for hw,container,sw in [('h264_nvenc','mp4','h264_cpu'),('hevc_nvenc','mov','prores'),
+                                ('hevc_nvenc','mp4','av1_svt'),('av1_nvenc','webm','av1_svt')]:
+            args=SimpleNamespace(codec=hw,out=f'result.{container}')
+            segments={'segments':['already-rendered']}
+            error = f"Unknown encoder '{hw}'" if container=='webm' else f'[enc:{hw} @ fff] Cannot open encoder'
+            with self.subTest(codec=hw,container=container), patch.object(video_pipeline,'export_video_attempt',
+                    side_effect=[video_pipeline.EncodeFailed(error),None]) as encode, \
+                    patch.object(video_pipeline,'emit'), patch('sys.stderr'):
+                _, actual=video_pipeline.export_video(args,{},segments,Path('.'),'ffmpeg',(1920,1080))
+                self.assertEqual(actual,sw)
+                self.assertEqual([call.args[-1] for call in encode.call_args_list],[hw,sw])
+                self.assertTrue(all(call.args[2] is segments for call in encode.call_args_list))
+                self.assertEqual(args.codec,hw)
+
+    def test_nvenc_export_does_not_retry_a_mux_failure(self):
+        args=SimpleNamespace(codec='av1_nvenc',out='result.mp4')
+        with patch.object(video_pipeline,'export_video_attempt',side_effect=video_pipeline.EncodeFailed(
+                '[vost#0:0/av1_nvenc @ fff] Error submitting a packet to the muxer: No space left on device\n'
+                '[out#0/mp4 @ fff] Error writing trailer: No space left on device')) as encode:
+            with self.assertRaisesRegex(video_pipeline.EncodeFailed,'No space left'):
+                video_pipeline.export_video(args,{},{},Path('.'),'ffmpeg',(1920,1080))
+            self.assertEqual(encode.call_count,1)
 
     def test_bundled_cpu_encoders_produce_playable_mp4(self):
         with tempfile.TemporaryDirectory(prefix='dlss-export-test-') as folder:

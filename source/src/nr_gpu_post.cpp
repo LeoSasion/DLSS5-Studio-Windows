@@ -104,7 +104,7 @@ void NrGpuPost::Prepare(const std::vector<float>& anchor,GpuTexture* modelInput)
     gpu_.EndAndWait();
 }
 std::vector<uint8_t> NrGpuPost::Process(const std::vector<float>& anchor,
-    GpuTexture& neural,GpuTexture& motion,bool reset,float detail,float colour) {
+    GpuTexture& neural,GpuTexture& motion,bool reset,float detail,float colour,bool batchNr) {
     lastGpuMs_=0;
     if(detail==0)return NrPost::Pack(anchor,settings_); // retain exact host round trip
     Constants c{};c.size[0]=anchor_.w;c.size[1]=anchor_.h;c.model[0]=Proxy().w;c.model[1]=Proxy().h;
@@ -115,16 +115,19 @@ std::vector<uint8_t> NrGpuPost::Process(const std::vector<float>& anchor,
     c.sixteen=settings_.pixelFormat=="rgba64le";
     std::copy(settings_.protect.begin(),settings_.protect.end(),c.protect);c.skin=settings_.protectSkin;c.highlights=settings_.protectHighlights;
     std::vector<uint32_t> words(sizeof(c)/4);memcpy(words.data(),&c,sizeof(c));
-    descriptorNext_=0;gpu_.Begin();gpu_.RecordTimestampBegin();
+    descriptorNext_=0;
+    if(!batchNr)gpu_.Begin();
+    const unsigned timestampSlot=batchNr?1:0;
+    gpu_.RecordTimestampBegin(timestampSlot);
     GpuTexture* correction=&delta_;
     if(settings_.stability>0) {
         Dispatch(stabilize_.Get(),{&neural,&Proxy(),&previousProxy_,&history_[current_^1],&motion},history_[current_],words);
         correction=&history_[current_];
     } else Dispatch(correction_.Get(),{&neural,&Proxy()},delta_,words);
     Dispatch(compose_.Get(),{&anchor_,correction},packed_,words);
-    gpu_.RecordTimestampEnd();
+    gpu_.RecordTimestampEnd(timestampSlot);
     // Readback appends its copy to this same command list, then submits/waits.
-    auto result=gpu_.ReadbackPackedRgba(packed_);lastGpuMs_=gpu_.LastGpuMs();
+    auto result=gpu_.ReadbackPackedRgba(packed_);lastGpuMs_=gpu_.LastGpuMs(timestampSlot);
     if(settings_.stability>0) {
         if(aliasProxy_)std::swap(anchor_,previousProxy_);
         else std::swap(proxy_,previousProxy_);

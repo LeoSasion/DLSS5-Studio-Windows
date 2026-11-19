@@ -11,7 +11,7 @@ public:
     GpuTexture& Proxy() {return aliasProxy_?anchor_:proxy_;}
     double LastGpuMs() const {return lastGpuMs_;}
     std::vector<uint8_t> Process(const std::vector<float>& anchor,
-        GpuTexture& neural,GpuTexture& motion,bool reset,float detail,float colour);
+        GpuTexture& neural,GpuTexture& motion,bool reset,float detail,float colour,bool batchNr);
 private:
     void Dispatch(ID3D12PipelineState* pso,const std::vector<GpuTexture*>& inputs,GpuTexture& output,
                   const std::vector<uint32_t>& constants);

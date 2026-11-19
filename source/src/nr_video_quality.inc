@@ -150,6 +150,7 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
     double uploadMs=0,flowMs=0,nrMs=0,composeMs=0,readbackMs=0,gpuNrMs=0,gpuPostMs=0;
     uint64_t frames=0,resets=0,cachedFrames=0,evaluatedFrames=0;
 
+    const bool batchNr=!motionVis&&!replay&&detail!=0&&!(cache&&cache->Enabled());
     bool failed=false;
     Frame frame;
     try {
@@ -177,9 +178,11 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
                 gpu.RecordTimestampBegin();
                 const int result=fwd.evaluate(cmd,feature,caps,color.res.Get(),depth.res.Get(),
                     (motionOn?motion:zeroMotion).res.Get(),output.res.Get(),nW,nH,nW,nH,frame.reset?1:0);
-                gpu.RecordTimestampEnd();gpu.EndAndWait();
-                nrMs+=elapsed(t);gpuNrMs+=gpu.LastGpuMs();
-                if(NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(result))){failed=true;LogErr("evaluate failed on frame %llu: 0x%08X",frames,static_cast<unsigned>(result));break;}
+                gpu.RecordTimestampEnd();
+                const bool evalFailed=NVSDK_NGX_FAILED(static_cast<NVSDK_NGX_Result>(result));
+                if(!batchNr||evalFailed){gpu.EndAndWait();gpuNrMs+=gpu.LastGpuMs();}
+                nrMs+=elapsed(t);
+                if(evalFailed){failed=true;LogErr("evaluate failed on frame %llu: 0x%08X",frames,static_cast<unsigned>(result));break;}
                 ++evaluatedFrames;
                 if(cache&&cache->Enabled()){t=Clock::now();nrPixels=gpu.ReadbackRgbaHalf(output);readbackMs+=elapsed(t);cache->WriteHalf(sourceHash,nrPixels);}
             }
@@ -198,7 +201,8 @@ int RunVideoQuality(const std::string& dllDir,int adapter,unsigned inW,unsigned 
                 bytes=NrPost::Pack(result,post);
             } else {
                 if(replay)gpu.UploadRgbaHalf(output,nrPixels);
-                bytes=gpuPost.Process(anchor.px,output,motion,frame.reset,detail,colour);
+                bytes=gpuPost.Process(anchor.px,output,motion,frame.reset,detail,colour,batchNr);
+                if(batchNr)gpuNrMs+=gpu.LastGpuMs();
                 gpuPostMs+=gpuPost.LastGpuMs();
             }
             composeMs+=elapsed(t);

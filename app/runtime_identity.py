@@ -145,7 +145,7 @@ class RuntimeIdentity:
         media_tools = [self.file(self.root / "out" / name) for name in ("ffmpeg.exe", "ffprobe.exe")]
         # UI files deliberately do not participate. Pixel/encoding changes do.
         pipeline = [self.file(self.root / name) for name in (
-            "nr_video.py", "render_engine.py", "video_pipeline.py", "video_quality.py")
+            "nr_video.py", "render_engine.py", "video_pipeline.py", "video_quality.py", "nvidia_video.py")
             if (self.root / name).is_file()]
         runtime = self.file(selection.dll_dir / "nvngx_dlssnr.dll")
         runtime["file_version"] = windows_file_version(selection.dll_dir / "nvngx_dlssnr.dll")
@@ -156,6 +156,9 @@ class RuntimeIdentity:
                     "runtime": runtime, "driver": drivers, "model": self.models(),
                     "gpu": {"luid": selection.luid, "profile": selection.profile,
                             "name": selection.name}}
+        import nvidia_video
+        identity["nvidia_video"] = [self.file(self.root / path.relative_to(nvidia_video.RUNTIME.parent.parent))
+                                    for path in nvidia_video.effect_files("vfg")[1:] + nvidia_video.effect_files("fruc")]
         identity["cacheable"] = identity["model"]["stable"] and not any(
             item.get("unavailable") for item in renderer + media_tools + drivers + [runtime])
         identity["digest"] = digest_json(identity)

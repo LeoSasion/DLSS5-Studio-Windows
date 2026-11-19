@@ -5,7 +5,7 @@ const state = {mode:'image', asset:null, output:null, framePreview:null, selecti
 const sessions = {image:null,video:null};
 let options = {containers:{hevc_nvenc:['mp4','mkv','mov']}};
 let dragDepth=0, pollTimer=0, polling=false;
-const videoFields=new Set(["motion_engine","motion","motion_vis","codec","container","bit_depth","cq","bitrate","bitrate_mode","audio","enc_preset","prores_profile","frames","stability","preserve_media","timing_mode"]);
+const videoFields=new Set(["motion_engine","motion","motion_vis","codec","container","bit_depth","cq","bitrate","bitrate_mode","audio","enc_preset","prores_profile","frames","stability","preserve_media","timing_mode","frame_interpolation"]);
 const showNotice = (text,error=false) => {$('#notice-text').textContent=text;$('#notice').hidden=false;$('#notice').classList.toggle('error',error)};
 const videoPlayer = new StudioVideoPlayer({onChange:refreshControls,onFrameCleared(){
   state.framePreview=null;
@@ -244,6 +244,9 @@ form.addEventListener('submit',e=>e.preventDefault());
 async function init(){
   try{
     options=await apiRequest('/api/options');paintHardware(options.hardware);const codecLabels={hevc_nvenc:'HEVC · 日常播放 / GPU',h264_nvenc:'H.264 · 通用播放 / GPU',h264_cpu:'H.264 · 通用播放 / CPU',av1_nvenc:'AV1 · 较小文件 / GPU',av1_svt:'AV1 · 较小文件 / CPU',prores:'ProRes · 后期剪辑 / CPU',ffv1:'FFV1 · 无损归档 / CPU'};populateSelect($('#codec'),Object.entries(options.codecs).map(([label,value])=>[codecLabels[value]||label,value]));
+    const interpolation=form.elements.frame_interpolation;
+    interpolation.dataset.codecDisabled=String(!options.nvidia_video?.interpolation);
+    interpolation.disabled=interpolation.dataset.codecDisabled==='true';
     const select=$('#codec'),defaults=options.video_defaults;
     for(const option of select.options){
       if(option.value.endsWith('_nvenc')&&!(options.encoder_available?.[option.value]??options.nvenc_available)){option.disabled=true;option.textContent+='（当前不可用）'}

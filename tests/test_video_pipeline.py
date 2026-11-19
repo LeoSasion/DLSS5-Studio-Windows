@@ -227,6 +227,22 @@ class VideoPipelineTests(unittest.TestCase):
         self.assertEqual(nr_video.probe(self.ffprobe,args.out)["trc"],"bt709")
         self.assertEqual(json.loads((self.root/"work/checkpoint.json").read_text())["output"]["hdr_mode"],"sdr_tonemapped")
 
+    def test_aac_copy_preserves_short_tracks_and_clip_end(self):
+        source,output=self.root/"aac.mp4",self.root/"result.mp4"
+        self.command(["-f","lavfi","-i","testsrc2=s=96x64:r=8:d=2",
+                      "-f","lavfi","-i","sine=sample_rate=48000:duration=2",
+                      "-itsoffset","0.125","-f","lavfi","-i","sine=sample_rate=48000:duration=0.937",
+                      "-map","0:v","-map","1:a","-map","2:a","-c:v","libopenh264","-c:a","aac",source])
+        self.assertEqual(self.run_video(self.args(source,output,"--codec","h264_cpu","--duration","1.25")),0)
+        original=[s for s in self.info(source)["streams"] if s["codec_type"]=="audio"]
+        audio=[s for s in self.info(output)["streams"] if s["codec_type"]=="audio"]
+        self.assertEqual(len(audio),2)
+        for before,after in zip(original,audio):
+            start,duration=float(before["start_time"]),float(before["duration"])
+            self.assertEqual(after["codec_name"],"aac")
+            self.assertAlmostEqual(float(after["start_time"]),start,delta=.0001)
+            self.assertAlmostEqual(float(after["start_time"])+float(after["duration"]),min(1.25,start+duration),delta=.0001)
+
     def test_multiple_audio_subtitles_and_languages_preserved_compatibly(self):
         source,output=self.root/"media.mkv",self.root/"result.mp4"
         subtitle=self.root/"captions.srt"

@@ -199,6 +199,12 @@ class JobCacheTests(unittest.TestCase):
     def test_pause_before_first_numeric_progress_remains_resumable(self):
         item = self.upload(); item.update(kind="video", duration=1, fps=12)
         job = self.submit(item); job["progress"] = None
+        work = self.outputs / job["id"] / "work"
+        work.mkdir(parents=True)
+        partial = work / "doubled.partial.nut"
+        partial.write_bytes(b"incomplete interpolation")
+        segment = work / "segment.nut"
+        segment.write_bytes(b"finished segment")
         process = SimpleNamespace(stdout=io.StringIO('NRSTATE {"status":"paused","completed_frames":0}\n'), wait=lambda: 75)
         group = SimpleNamespace(start=Mock(return_value=process), check=lambda: None, close=Mock())
         with patch.object(server, "ProcessGroup", return_value=group):
@@ -207,6 +213,8 @@ class JobCacheTests(unittest.TestCase):
         self.assertEqual(result["status"], "paused", result)
         self.assertEqual(result["progress"], 0)
         self.assertTrue(result["resumable"])
+        self.assertFalse(partial.exists())
+        self.assertEqual(segment.read_bytes(), b"finished segment")
 
     def test_pause_resume_worker_with_finished_history_and_null_timestamps(self):
         item = self.upload(); done = self.submit(item); self.render_image(done)

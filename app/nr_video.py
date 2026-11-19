@@ -339,6 +339,9 @@ def build_parser():
     ap.add_argument("--exe", default=os.path.join(os.path.dirname(__file__), "out", "video2dlssnr.exe"))
     ap.add_argument("--dll-dir", default="", help="override nvngx dir (default: next to video2dlssnr.exe)")
     ap.add_argument("--adapter", type=int, default=-1, help="DXGI adapter index (default: fastest)")
+    ap.add_argument("--frame-interpolation", action="store_true", help="double the frame rate of SDR constant-rate sources")
+    ap.add_argument("--nvidia-profile", choices=("rtx30", "rtx40", "rtx50"), help=argparse.SUPPRESS)
+    ap.add_argument("--gpu-luid", default="", help=argparse.SUPPRESS)
 
     g = ap.add_argument_group("output size")
     g.add_argument("--nr-width", type=int, default=0, help="output width (height by aspect)")

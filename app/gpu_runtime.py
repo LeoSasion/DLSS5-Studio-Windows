@@ -68,7 +68,7 @@ def enumerate_adapters():
     return result
 
 
-def cuda_architectures():
+def cuda_architectures(*, ordinals=False):
     """Use adapter LUID, never confuse CUDA / nvidia-smi indices with DXGI indices."""
     result = {}
     try:
@@ -90,7 +90,7 @@ def cuda_architectures():
             if (device_fn(C.byref(device), index) or luid_fn(luid, C.byref(mask), device.value)
                     or attr(C.byref(major), 75, device.value) or attr(C.byref(minor), 76, device.value)):
                 continue
-            result[luid.raw.hex()] = (major.value, minor.value)
+            result[luid.raw.hex()] = index if ordinals else (major.value, minor.value)
     except (OSError, AttributeError):
         pass
     return result

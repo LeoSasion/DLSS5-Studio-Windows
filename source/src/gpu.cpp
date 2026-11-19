@@ -292,14 +292,14 @@ void GpuContext::Initialize(bool enableDebugLayer, int adapterIndex) {
 
     D3D12_QUERY_HEAP_DESC qh{};
     qh.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-    qh.Count = 2;
+    qh.Count = 2 * TimestampSlots;
     CHECK_HR(m_device->CreateQueryHeap(&qh, IID_PPV_ARGS(&m_queryHeap)));
 
     D3D12_HEAP_PROPERTIES rbHeap{};
     rbHeap.Type = D3D12_HEAP_TYPE_READBACK;
     D3D12_RESOURCE_DESC rbDesc{};
     rbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    rbDesc.Width = 2 * sizeof(uint64_t);
+    rbDesc.Width = 2 * TimestampSlots * sizeof(uint64_t);
     rbDesc.Height = 1;
     rbDesc.DepthOrArraySize = 1;
     rbDesc.MipLevels = 1;
@@ -586,8 +586,9 @@ ID3D12GraphicsCommandList* GpuContext::Begin() {
 
 void GpuContext::EndAndWait() {
     CHECK(m_listOpen);
-    if (m_timestampPending) {
-        m_list->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, 2,
+    const unsigned queryCount = 2 * m_timestampCount;
+    if (queryCount) {
+        m_list->ResolveQueryData(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0, queryCount,
                                  m_queryReadback.Get(), 0);
     }
     CHECK_HR(m_list->Close());
@@ -596,16 +597,16 @@ void GpuContext::EndAndWait() {
     m_listOpen = false;
     WaitForGpu();
 
-    if (m_timestampPending) {
-        m_timestampPending = false;
+    if (queryCount) {
         void* mapped = nullptr;
-        D3D12_RANGE range{0, 2 * sizeof(uint64_t)};
+        D3D12_RANGE range{0, queryCount * sizeof(uint64_t)};
         CHECK_HR(m_queryReadback->Map(0, &range, &mapped));
         const uint64_t* ts = static_cast<const uint64_t*>(mapped);
-        const uint64_t delta = (ts[1] > ts[0]) ? (ts[1] - ts[0]) : 0;
-        m_lastGpuMs = m_timestampFreq ? (1000.0 * static_cast<double>(delta) /
-                                         static_cast<double>(m_timestampFreq))
-                                      : 0.0;
+        for (unsigned slot = 0; slot < m_timestampCount; ++slot, ts += 2) {
+            const uint64_t delta = ts[1] > ts[0] ? ts[1] - ts[0] : 0;
+            m_lastGpuMs[slot] = m_timestampFreq ? 1000.0 * delta / m_timestampFreq : 0.0;
+        }
+        m_timestampCount = 0;
         D3D12_RANGE empty{0, 0};
         m_queryReadback->Unmap(0, &empty);
     }
@@ -663,15 +664,15 @@ void GpuContext::UavBarrier(GpuTexture& t) {
     m_list->ResourceBarrier(1, &b);
 }
 
-void GpuContext::RecordTimestampBegin() {
-    CHECK(m_listOpen);
-    m_list->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 0);
-    m_timestampPending = true;
+void GpuContext::RecordTimestampBegin(unsigned slot) {
+    CHECK(m_listOpen && slot == m_timestampCount && slot < TimestampSlots);
+    m_list->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * slot);
 }
 
-void GpuContext::RecordTimestampEnd() {
-    CHECK(m_listOpen);
-    m_list->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
+void GpuContext::RecordTimestampEnd(unsigned slot) {
+    CHECK(m_listOpen && slot == m_timestampCount && slot < TimestampSlots);
+    m_list->EndQuery(m_queryHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 2 * slot + 1);
+    ++m_timestampCount;
 }
 
 ComPtr<ID3D12Resource> GpuContext::TransferBuffer(UINT64 bytes,bool readback) {

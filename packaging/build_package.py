@@ -22,11 +22,26 @@ for name in ("video2dlssnr.exe", "nvngx.dll_dlssnr.dll"):
     if not (ENGINE / name).is_file():
         raise SystemExit(f"Engine build is incomplete: {ENGINE / name}")
 CACHE = ROOT / "packaging" / "cache"
+# This LGPL build uses NVENC API 13.0, which still works with R590 drivers.
+FFMPEG_BUILD = "ffmpeg-N-124278-gcc3ca17127-win64-lgpl"
+FFMPEG_URL = f"https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-04-30-13-44/{FFMPEG_BUILD}.zip"
+FFMPEG_SHA256 = "bb2af8d24de9dd52bccfe2e48538a586c05d157b4498bffe67f09d7c3f168c98"
 ARTIFACTS = ROOT / "outputs"
 for path in (BUILD, CACHE, ARTIFACTS):
     path.mkdir(parents=True, exist_ok=True)
 if PACKAGE.exists() and any(PACKAGE.iterdir()):
     raise SystemExit(f"Staging already exists; choose a fresh build directory: {PACKAGE}")
+ffmpeg_archive = CACHE / f"{FFMPEG_BUILD}.zip"
+if not ffmpeg_archive.exists():
+    pending = ffmpeg_archive.with_suffix(".part")
+    with urllib.request.urlopen(FFMPEG_URL, timeout=60) as response, pending.open("wb") as target:
+        shutil.copyfileobj(response, target)
+    if hashlib.sha256(pending.read_bytes()).hexdigest() != FFMPEG_SHA256:
+        raise SystemExit("FFmpeg download differs from the published SHA-256")
+    pending.replace(ffmpeg_archive)
+if hashlib.sha256(ffmpeg_archive.read_bytes()).hexdigest() != FFMPEG_SHA256:
+    raise SystemExit(f"FFmpeg archive differs from the published SHA-256: {ffmpeg_archive}")
+
 PACKAGE.mkdir(exist_ok=True)
 
 embedded = CACHE / "python-3.10.11-embed-amd64.zip"
@@ -57,7 +72,12 @@ shutil.copytree(ROOT / "app/web", app / "web", ignore=ignore)
 # superseded DLLs stay available for rollback without inflating every release.
 shutil.copytree(ROOT / "app/out", app / "out",
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "dlss5", "nvngx_dlssnr.dll",
-                                             "video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_vsr.dll"))
+                                             "video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_vsr.dll",
+                                             "ffmpeg.exe", "ffprobe.exe", "nvidia-vfx", "nvidia-fruc"))
+with zipfile.ZipFile(ffmpeg_archive) as archive:
+    for name in ("ffmpeg.exe", "ffprobe.exe"):
+        with archive.open(f"{FFMPEG_BUILD}/bin/{name}") as source, (app / "out" / name).open("wb") as target:
+            shutil.copyfileobj(source, target)
 for name in ("video2dlssnr.exe", "nvngx.dll_dlssnr.dll", "nvngx_vsr.dll"):
     if (ENGINE / name).is_file():
         shutil.copy2(ENGINE / name, app / "out" / name)
@@ -87,7 +107,9 @@ tools = PACKAGE / "tools"
 tools.mkdir()
 for name in ("incremental_update.py", "components.py"):
     shutil.copy2(ROOT / "packaging" / name, tools / name)
-(licenses / "THIRD-PARTY.txt").write_text("""Bundled third-party components retain their respective notices and terms.
+with zipfile.ZipFile(ffmpeg_archive) as archive:
+    (licenses / "ffmpeg-upstream-license.txt").write_bytes(archive.read(f"{FFMPEG_BUILD}/LICENSE.txt"))
+(licenses / "THIRD-PARTY.txt").write_text(f"""Bundled third-party components retain their respective notices and terms.
 Engine attribution: https://github.com/DaniilSokolyuk/video2dlssnr; DLSS Studio modifications are built from the included source.
 NVIDIA NGX / DLSS binaries retain their vendor terms; component identities are recorded in app/dlss5-components.json.
 Python 3.10.11 x64: https://www.python.org/downloads/release/python-31011/
@@ -95,7 +117,9 @@ Python license: ../runtime/LICENSE.txt
 Python package licenses: ../runtime/Lib/site-packages/*dist-info/
 Phosphor icons: ../app/web/assets/icons/LICENSE
 FFmpeg license and build options: ffmpeg-license.txt
-FFmpeg source project: https://ffmpeg.org/
+FFmpeg source revision: https://github.com/FFmpeg/FFmpeg/tree/cc3ca17127
+FFmpeg upstream build: {FFMPEG_URL}
+FFmpeg archive SHA-256: {FFMPEG_SHA256}
 This ZIP packages the existing project and its verified dependencies; it does not grant additional rights to third-party components.
 """, encoding="utf-8")
 result = subprocess.run([str(app / "out/ffmpeg.exe"), "-L"], capture_output=True, text=True, errors="replace")

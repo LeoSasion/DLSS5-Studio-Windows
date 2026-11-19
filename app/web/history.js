@@ -14,7 +14,7 @@ form.addEventListener('change',saveSession);
 
 function applySettings(values){
   if(!values)return;
-  values={protect_region:[],protect_skin:0,protect_highlights:0,stability:0,render_scale:1,timing_mode:'preserve',preserve_media:true,...values};
+  values={protect_region:[],protect_skin:0,protect_highlights:0,stability:0,render_scale:1,timing_mode:'preserve',preserve_media:true,frame_interpolation:false,...values};
   // Change the codec first, then restore its dependent container/quality fields.
   if(values.codec&&[...$('#codec').options].some(o=>o.value===values.codec&&!o.disabled))$('#codec').value=values.codec;
   updateCodec();

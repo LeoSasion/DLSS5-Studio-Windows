@@ -14,7 +14,7 @@ from pathlib import Path
 
 CACHE_SCHEMA = "studio-render-v3"
 ENCODING_FIELDS = {"codec", "container", "cq", "bitrate", "bitrate_mode", "bit_depth",
-                   "enc_preset", "audio", "prores_profile", "preserve_media"}
+                   "enc_preset", "audio", "prores_profile", "preserve_media", "frame_interpolation"}
 IMAGE_FIELDS = {"size", "style", "preset", "intensity", "local_structure", "local_tone", "skin",
                 "global_tone", "detail", "color", "ui_correction", "auto_mask", "hdr",
                 "protect_region", "protect_skin", "protect_highlights", "render_scale"}
@@ -53,6 +53,8 @@ def canonical_settings(settings, item, *, neural=False):
                 values.pop(key, None)
     else:
         values.pop("hdr", None)  # Video transfer is detected from the source.
+        if not values.get("frame_interpolation"):
+            values.pop("frame_interpolation", None)
         full = values.get("job_kind") != "clip"
         if full:
             values["clip_start"] = 0

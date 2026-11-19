@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import copy
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -24,10 +25,12 @@ import time
 import uuid
 
 import nr_video as nv
+import nvidia_video
 
 PIPELINE_VERSION = "studio-video-pts16-v4b-overlap"
 PAUSED = 75
 CREATE_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+MIN_INTERPOLATION_FREE_BYTES = 1024**3
 _REPLACE_RETRY_DELAYS = (.02, .04, .08, .16, .32, .5, .5, .5, .5, .5)
 
 
@@ -264,7 +267,18 @@ def engine_command(args, src, dimensions, pixel_format, transfer):
     return command
 
 
-def monitor_pipeline(commands, total, offset, warm, overall, args):
+class InterpolationPaused(Exception):
+    pass
+
+
+def check_interpolation(work, pause_file):
+    if pause_file and Path(pause_file).exists():
+        raise InterpolationPaused
+    if shutil.disk_usage(work).free < MIN_INTERPOLATION_FREE_BYTES:
+        raise OSError("磁盘剩余空间不足以安全生成补帧片段；原始增强片段已保留。")
+
+
+def monitor_pipeline(commands, total, offset, warm, overall, args, interpolation_work=None):
     """Drain every error pipe; terminate all peers after failure or a real stall."""
     processes, threads, logs, metrics = [], [], [], []
     process_started, process_finished = {}, {}
@@ -272,7 +286,8 @@ def monitor_pipeline(commands, total, offset, warm, overall, args):
     visible = [offset]
     lock = threading.Lock()
     started = time.monotonic()
-    def drain(pipe, engine=False):
+    names = ["decode", "engine"] + (["vsr"] if len(commands) == 4 else []) + ["checkpoint_encode"]
+    def drain(pipe, engine=False, vfx=False):
         for raw in iter(pipe.readline, b""):
             line = raw.decode("utf-8", "replace").strip()
             with lock:
@@ -289,32 +304,38 @@ def monitor_pipeline(commands, total, offset, warm, overall, args):
                      "progress": min(94, round(94 * visible[0] / overall)), "fps": round(fps, 2),
                      "eta": nv.fmt_eta((overall-visible[0])/fps) if fps else "--:--",
                      "phase": "render", "message": "正在增强视频"})
+            elif interpolation_work and (count := re.fullmatch(r"VFXPROG (\d+)", line)):
+                emit("NRJOB", {"frame": min(total, int(count[1])), "total_frames": total,
+                     "progress": 94, "phase": "render", "message": "正在补帧 ×2"})
             elif engine and line.startswith("NRMETRIC "):
                 try:
                     metrics.append(json.loads(line[len("NRMETRIC "):]))
                 except (ValueError, TypeError):
                     pass
-            elif line and engine:
+            elif line and (engine or vfx):
                 print(line, file=sys.stderr, flush=True)
         pipe.close()
     try:
-        p1 = subprocess.Popen(commands[0], stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_FLAGS)
-        process_started["decode"] = time.monotonic()
-        processes.append(p1)
-        p2 = subprocess.Popen(commands[1], stdin=p1.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_FLAGS)
-        process_started["engine"] = time.monotonic()
-        processes.append(p2)
-        p1.stdout.close()
-        p3 = subprocess.Popen(commands[2], stdin=p2.stdout, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=CREATE_FLAGS)
-        process_started["checkpoint_encode"] = time.monotonic()
-        processes.append(p3)
-        p2.stdout.close()
-        for process in processes:
-            thread = threading.Thread(target=drain, args=(process.stderr, process is p2), daemon=True)
+        for index, (name, command) in enumerate(zip(names, commands)):
+            pipe = processes[-1].stdout if processes else None
+            try:
+                process = subprocess.Popen(command, stdin=pipe, stderr=subprocess.PIPE, creationflags=CREATE_FLAGS,
+                    stdout=subprocess.DEVNULL if index == len(commands) - 1 else subprocess.PIPE)
+            finally:
+                if pipe is not None:
+                    pipe.close()
+            process_started[name] = time.monotonic()
+            processes.append(process)
+        for name, process in zip(names, processes):
+            thread = threading.Thread(target=drain, args=(process.stderr, name == "engine", name == "vsr"), daemon=True)
             thread.start()
             threads.append(thread)
+        next_interpolation_check = started
         while any(process.poll() is None for process in processes):
-            for name,process in zip(("decode","engine","checkpoint_encode"),processes):
+            if interpolation_work and time.monotonic() >= next_interpolation_check:
+                check_interpolation(interpolation_work, args.pause_file)
+                next_interpolation_check = time.monotonic() + .5
+            for name,process in zip(names,processes):
                 if process.poll() is not None and name not in process_finished:
                     process_finished[name] = time.monotonic()
             failure = next((process.returncode for process in processes if process.poll() not in (None, 0)), None)
@@ -395,6 +416,13 @@ def resolve_seam(segment, previous, timeline, work, ffmpeg, raw_pixel, src):
             "seam_source_sha256":previous.get("raw_sha256",previous.get("sha256")) if fade else None}
 
 
+def vfx_command(args, effect, raw_pixel, dimensions, target=(), source_fps=None):
+    if effect == "fruc":
+        return [str(nvidia_video.FRUC), *map(str, dimensions), args._gpu_luid, str(source_fps)]
+    return [sys.executable, str(Path(nvidia_video.__file__)), effect, *map(str, dimensions), raw_pixel,
+            args._gpu_luid, *map(str, target)]
+
+
 def render_segment(args, src, timeline, segment, work, ffmpeg, ffprobe, raw_pixel, transfer, dimensions, overall, previous=None):
     warm = segment["first"] - segment["warm_first"]
     source_start = timeline["pts"][segment["warm_first"]]
@@ -432,11 +460,13 @@ def render_segment(args, src, timeline, segment, work, ffmpeg, ffprobe, raw_pixe
     nr_directory=work/"nr"/f"segment-{segment['index']:06d}"
     model_cache_key=hashlib.sha256(json.dumps({"model":args._nr_model_key,
                     "source_range":[segment["warm_first"],segment["render_stop"]]},sort_keys=True).encode()).hexdigest()
-    tool=engine_command(args, src, dimensions, raw_pixel, transfer)
+    native = (src["w"], src["h"])
+    vsr = getattr(args, "_vsr", False)
+    tool=engine_command(args, src, native if vsr else dimensions, raw_pixel, transfer)
     tool += ["--nr-cache-dir",str(nr_directory),"--nr-cache-frames",str(count),"--nr-cache-key",model_cache_key]
-    commands = [decode, tool, encode]
+    commands = [decode, tool] + ([vfx_command(args, "vsr", raw_pixel, native, dimensions)] if vsr else []) + [encode]
     if args.dry_run:
-        for label, command in zip(("decode", "tool", "checkpoint"), commands):
+        for label, command in zip(["decode", "tool"] + (["NVIDIA VSR"] if vsr else []) + ["checkpoint"], commands):
             print(label + ": " + subprocess.list2cmdline(command))
         return None
     for attempt in range(2):
@@ -482,10 +512,26 @@ def sdr_proxy_filter(src, rgb_input=True):
             "zscale=t=bt709:m=bt709:r=limited")
 
 
-def media_args(src, ext, args):
+def media_args(src, ext, args, start, duration):
+    def copied_audio_tail(stream, index):
+        if ext not in {".mp4", ".mov"} or stream.get("codec_name") != "aac":
+            return []
+        end = duration
+        try:
+            source_end = float(stream["start_time"]) + float(stream["duration"]) - src["format_start_time"] - start
+            if 0 < source_end < duration:
+                end = source_end
+        except (KeyError, TypeError, ValueError):
+            pass
+        # Preserve the final AAC packet bytes while keeping its padding outside the playable clip.
+        return [f"-bsf:a:{index}", f"setts=duration='min(DURATION,max(0,round({end:.6f}/TB)-PTS))'"]
+
     streams = src.get("audio_streams", [])
     if not args.preserve_media:
-        return nv.audio_args(src, ext, args.audio, args.audio_bitrate)
+        flags = nv.audio_args(src, ext, args.audio, args.audio_bitrate)
+        if streams and flags[-2:] == ["-c:a", "copy"]:
+            flags += copied_audio_tail(streams[0], 0)
+        return flags
     result = []
     if args.audio == "none":
         result += ["-an"]
@@ -497,7 +543,9 @@ def media_args(src, ext, args):
                 permitted = nv.COPYABLE_AUDIO[ext]
                 mode = "copy" if permitted is None or stream.get("codec_name") in permitted else ("opus" if ext == ".webm" else "aac")
             result += [f"-c:a:{index}", "libopus" if mode == "opus" else "pcm_s24le" if mode == "pcm" else mode]
-            if mode in {"aac", "opus"}:
+            if mode == "copy":
+                result += copied_audio_tail(stream, index)
+            elif mode in {"aac", "opus"}:
                 result += [f"-b:a:{index}", f"{args.audio_bitrate}k"]
     text_subtitles = {"subrip", "ass", "ssa", "webvtt", "mov_text", "text"}
     selected = 0
@@ -527,6 +575,10 @@ def write_chapters(src, start, duration, target):
                   f"END={round((end-start)*1000000)}"]
         lines += [escape(key)+"="+escape(value) for key,value in chapter.get("tags",{}).items()]
     target.write_text("\n".join(lines)+"\n",encoding="utf-8")
+
+
+class EncodeFailed(RuntimeError):
+    pass
 
 
 def encode_with_progress(command, checkpoint, stall_timeout):
@@ -565,16 +617,108 @@ def encode_with_progress(command, checkpoint, stall_timeout):
             reader.join(timeout=5)
             if process.returncode:
                 errors.seek(0)
-                raise RuntimeError(errors.read().decode("utf-8","replace")[-5000:])
+                raise EncodeFailed(errors.read().decode("utf-8","replace")[-5000:])
         finally:
             if process.poll() is None:process.kill();process.wait()
             reader.join(timeout=2)
             process.stdout.close()
 
 
+def concat_input(work, segments):
+    concat = work / "segments.ffconcat"
+    lines = ["ffconcat version 1.0"]
+    for segment in segments:
+        path = segment["path"].replace("'", "'\\''")
+        lines += [f"file '{path}'", f"duration {segment['end']-segment['start']:.6f}"]
+    concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return ["-f", "concat", "-safe", "0", "-i", str(concat)]
+
+
+def double_rate(src, timestamps):
+    rate = Fraction(src["rate"])
+    # Compare PTS against the nominal grid without letting rounding grow over time.
+    if len(timestamps) < 2 or any(abs(stamp - timestamps[0] - index / float(rate)) > .001
+                                  for index, stamp in enumerate(timestamps)):
+        return None
+    return str(rate * 2)
+
+
+def delivered_source_times(relative_times, src, timing, interpolation_rate=None):
+    if interpolation_rate:
+        step = Fraction(2) / Fraction(interpolation_rate)
+        return [round(float(index * step), 6) for index in range(len(relative_times))]
+    return relative_times if timing == "preserve" else [round(round(stamp*src["fps"])/src["fps"],6) for stamp in relative_times]
+
+
+def interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate):
+    target = work / "doubled.nut"
+    partial = target.with_suffix(".partial.nut")
+    validation = work / "doubled.json"
+    check_interpolation(work, args.pause_file)
+    identity_files = nvidia_video.effect_files(backend)
+    key = [backend, rate, *[digest(path) for path in identity_files], *[part["sha256"] for part in checkpoint["segments"]]]
+    if target.is_file() and validation.is_file():
+        try:
+            previous = json.loads(validation.read_text(encoding="utf-8"))
+            if previous == {"key": key, "sha256": digest(target)}:
+                return target
+        except (OSError, ValueError):
+            pass
+    width, height = checkpoint["dimensions"]
+    pixel = checkpoint["pixel_format"]
+    ipc_pixel = "bgra" if backend == "fruc" else pixel
+    decode = [ffmpeg, "-v", "error", *concat_input(work, checkpoint["segments"]), "-map", "0:v:0",
+              "-an", "-fps_mode", "passthrough", "-pix_fmt", ipc_pixel, "-f", "rawvideo", "-"]
+    tag = nv.colour_tags(src)
+    filters = f"format={'bgra' if pixel == 'rgba' else pixel},setparams=colorspace=gbr:color_primaries={tag[1]}:color_trc={tag[2]}:range=pc"
+    encode = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", ipc_pixel, "-s", f"{width}x{height}",
+              "-framerate", rate, "-i", "-", "-vf", filters, "-c:v", "ffv1", "-g", "1", "-f", "nut", str(partial)]
+    total = checkpoint["total_frames"]
+    emit("NRJOB", {"frame": 0, "total_frames": total, "progress": 94, "phase": "render", "message": "正在补帧 ×2"})
+    try:
+        monitor_pipeline([decode, vfx_command(args, backend, pixel, (width, height), source_fps=src["fps"]), encode],
+                         total, 0, 0, total, args, interpolation_work=work)
+        probe = json.loads(checked([ffprobe, "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                                   "stream=nb_read_frames,width,height,pix_fmt", "-of", "json", str(partial)]).stdout)["streams"][0]
+        if (int(probe.get("nb_read_frames", 0)), probe.get("width"), probe.get("height")) != (total * 2, width, height):
+            raise RuntimeError("补帧输出的帧数或尺寸校验失败，原始增强片段仍可复用。")
+        if pixel == "rgba64le" and not high_precision(probe):
+            raise RuntimeError("补帧输出意外降低精度，未导出低精度结果。")
+        partial.replace(target)
+        atomic_json(validation, {"key": key, "sha256": digest(target)})
+    finally:
+        if partial.exists():
+            try:
+                partial.unlink()
+            except OSError:
+                pass
+    return target
+
+
 def export_video(args, src, checkpoint, work, ffmpeg, out_dimensions):
     ext = Path(args.out).suffix.lower()
     codec = nv.resolve_codec(args.codec)
+    fallback = {
+        "h264_nvenc": "h264_cpu",
+        "hevc_nvenc": "prores" if ext == ".mov" else "av1_svt",
+        "av1_nvenc": "av1_svt",
+    }.get(codec)
+    started = time.monotonic()
+    try:
+        export_video_attempt(args, src, checkpoint, work, ffmpeg, out_dimensions, ext, codec)
+    except EncodeFailed as err:
+        # FFmpeg labels encoder failures with the exact encoder; mux and I/O errors should surface unchanged.
+        encoder_error = rf"\[(?:enc:)?{codec}\s+@|Unknown encoder '{codec}'"
+        if not fallback or not re.search(encoder_error, str(err), re.I):
+            raise
+        emit("NRINFO", {"message": f"{codec} 编码失败，正在使用 {fallback} 重新导出；已增强的片段无需重算。"})
+        print(str(err), file=sys.stderr, flush=True)
+        codec = fallback
+        export_video_attempt(args, src, checkpoint, work, ffmpeg, out_dimensions, ext, codec)
+    return (time.monotonic() - started) * 1000, codec
+
+
+def export_video_attempt(args, src, checkpoint, work, ffmpeg, out_dimensions, ext, codec):
     if codec not in nv.CONTAINERS.get(ext, set()):
         raise ValueError("所选编码与输出容器不兼容。")
     tags = nv.colour_tags(src)
@@ -589,12 +733,7 @@ def export_video(args, src, checkpoint, work, ffmpeg, out_dimensions):
     flags, pixel = nv.video_args(codec, encoded, *out_dimensions, tags)
     if codec == "ffv1" and checkpoint["pixel_format"] == "rgba64le":
         pixel = "rgba64le"
-    concat = work / "segments.ffconcat"
-    lines = ["ffconcat version 1.0"]
-    for segment in checkpoint["segments"]:
-        path = segment["path"].replace("'", "'\\''")
-        lines += [f"file '{path}'", f"duration {segment['end']-segment['start']:.6f}"]
-    concat.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    master = ["-i", str(work / "doubled.nut")] if checkpoint.get("interpolation_rate") else concat_input(work, checkpoint["segments"])
     filters = []
     if tone_map:
         filters.append(sdr_proxy_filter({**src,"primaries":checkpoint.get("working_primaries",src["primaries"])}))
@@ -605,7 +744,7 @@ def export_video(args, src, checkpoint, work, ffmpeg, out_dimensions):
         filters.append(f"scale=out_color_matrix={tags[0]}:out_range=tv:flags={nv.SWS}")
     filters += [f"format={pixel}", f"setparams=colorspace={'gbr' if rgb else tags[0]}:color_primaries={tags[1]}:color_trc={tags[2]}:range={'pc' if rgb else 'tv'}"]
     duration = checkpoint["duration"]
-    command = [ffmpeg, "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(concat),
+    command = [ffmpeg, "-y", "-v", "error", *master,
                "-ss", f"{checkpoint['source_start']:.6f}", "-i", args.inp]
     if args.preserve_media:
         chapters = work / "chapters.ffmetadata"
@@ -627,12 +766,12 @@ def export_video(args, src, checkpoint, work, ffmpeg, out_dimensions):
         command += ["-filter_complex",graph,"-map","[delivery]"]
     else:
         command += ["-map","0:v:0","-vf", ",".join(filter(None, filters))]
-    command += media_args(src, ext, args)
+    command += media_args(src, ext, args, checkpoint["source_start"], duration)
     if args.preserve_media:
         command += ["-map_chapters","2"]
     command += ["-fps_mode", "passthrough" if args.timing == "preserve" else "cfr"]
     if args.timing == "cfr":
-        command += ["-r", src["rate"]]
+        command += ["-r", checkpoint.get("interpolation_rate") or src["rate"]]
     elif ext in {".mp4", ".mov"}:
         command += ["-video_track_timescale", "1000000"]
     if args.timing == "preserve":
@@ -644,13 +783,11 @@ def export_video(args, src, checkpoint, work, ffmpeg, out_dimensions):
     command.append(str(temporary))
     if args.dry_run:
         print("export: " + subprocess.list2cmdline(command))
-        return 0.0
+        return
     emit("NRJOB", {"frame": checkpoint["total_frames"], "total_frames": checkpoint["total_frames"],
                    "progress": 95, "phase": "encoding", "message": "增强片段已完成，正在封装导出…"})
-    started = time.monotonic()
     encode_with_progress(command,checkpoint,args.stall_timeout)
     temporary.replace(args.out)
-    return (time.monotonic() - started) * 1000
 
 
 def run_pipeline(args):
@@ -681,6 +818,17 @@ def run_pipeline(args):
             emit("NRINFO",{"message":"增强导出保留静态 HDR 色彩与亮度元数据；不复用原画专属的动态 HDR/Dolby Vision 映射。"})
         desired = nv.output_size(src, args.nr_width, args.nr_height, args.nr_scale, args.nr_fit)
         dimensions = nv.tool_size(src, *desired)
+        profile = getattr(args, "nvidia_profile", None)
+        args._gpu_luid = getattr(args, "gpu_luid", "")
+        if not profile:
+            profile, args._gpu_luid = nvidia_video.cli_adapter(args.adapter)
+        capabilities = nvidia_video.capabilities(profile)
+        # The existing HDR metadata path is unchanged until the coupled effects are validated.
+        args._vsr = (capabilities["upscale"] and transfer == "sdr" and not args.nr_motion_vis
+                     and min(src["w"], src["h"]) >= 360 and dimensions == desired
+                     and dimensions != (src["w"], src["h"]))
+        if args._vsr:
+            emit("NRINFO", {"message": "分辨率放大使用 NVIDIA Maxine VSR High。"})
         signature = {"version": PIPELINE_VERSION, "source": source_hash, "application": args.render_key,
                      "pixel_format": raw_pixel, "transfer": transfer, "dimensions": dimensions,
                      "working_primaries":working_primaries(src),
@@ -690,6 +838,8 @@ def run_pipeline(args):
                      "range": [args.start, args.duration, args.frames],
                      "model": {k: v for k, v in vars(args).items() if k.startswith("nr_")},
                      "engine_sha256": digest(args.exe)}
+        if args._vsr:
+            signature["upscale"] = [digest(path) for path in nvidia_video.effect_files("vsr")]
         post_fields={"nr_detail","nr_color","nr_stability","nr_protect","nr_protect_skin","nr_protect_highlights","nr_hdr","nr_cache_key"}
         model_controls={key:value for key,value in vars(args).items() if key.startswith("nr_") and key not in post_fields}
         if args.nr_cache_key:
@@ -743,10 +893,10 @@ def run_pipeline(args):
                           "segments": [], "metrics": {}}
         selected_times = timeline["pts"][plan[0]["first"]:plan[-1]["stop"]]
         relative_times = [round(stamp-checkpoint["source_start"], 6) for stamp in selected_times]
-        result_times = relative_times if args.timing == "preserve" else [round(round(stamp*src["fps"])/src["fps"],6) for stamp in relative_times]
-        atomic_json(work/"frame-map.json", {"version":1, "actual_start":checkpoint["source_start"],
+        frame_map = {"version":1, "actual_start":checkpoint["source_start"],
                     "source_pts_origin":timeline["origin"], "source_times":selected_times,
-                    "result_times":result_times, "timing":args.timing})
+                    "result_times":delivered_source_times(relative_times, src, args.timing), "timing":args.timing}
+        atomic_json(work/"frame-map.json", frame_map)
         checkpoint.update(actual_start=checkpoint["source_start"], source_pts_origin=timeline["origin"], timeline_file="frame-map.json")
         existing = {segment["index"]: segment for segment in checkpoint["segments"]}
         completed, reused, render_ms, reused_indexes = [], 0, 0.0, set()
@@ -790,7 +940,27 @@ def run_pipeline(args):
             return PAUSED
         checkpoint["metrics"].update(source_probe_ms=probe_ms, timeline_probe_ms=timeline_ms,
                                        render_wall_ms=render_ms, reused_frames=reused, frames=checkpoint["total_frames"])
-        checkpoint["metrics"]["encode_wall_ms"] = export_video(args, src, checkpoint, work, ffmpeg, desired)
+        checkpoint.pop("interpolation_rate", None)
+        checkpoint["metrics"].pop("interpolation_wall_ms", None)
+        requested = getattr(args, "frame_interpolation", False) and not args.nr_motion_vis
+        backend = capabilities["interpolation"]
+        rate = double_rate(src, selected_times) if requested and transfer == "sdr" else None
+        skipped = None
+        if requested and (not rate or not backend or (backend == "fruc" and raw_pixel != "rgba")):
+            skipped = ("当前素材格式不支持补帧，已保留原始帧率。" if backend
+                       else "当前显卡缺少可用的 NVIDIA 补帧组件，已保留原始帧率。")
+            emit("NRINFO", {"message": skipped})
+        elif requested:
+            fx_started = time.monotonic()
+            try:
+                interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate)
+                check_interpolation(work, args.pause_file)
+            except InterpolationPaused:
+                emit("NRSTATE", {"status": "paused", "completed_frames": checkpoint["total_frames"]})
+                return PAUSED
+            checkpoint["metrics"]["interpolation_wall_ms"] = (time.monotonic() - fx_started) * 1000
+            checkpoint["interpolation_rate"] = rate
+        checkpoint["metrics"]["encode_wall_ms"], actual_codec = export_video(args, src, checkpoint, work, ffmpeg, desired)
         if args.dry_run:
             return 0
         engine_totals, gpu_totals, cached_nr_frames, evaluated_nr_frames, bypassed_nr_frames, initialization_ms = {}, {}, 0, 0, 0, 0.0
@@ -814,9 +984,27 @@ def run_pipeline(args):
                 nr_evaluated_frames=evaluated_nr_frames,bypassed_nr_frames=bypassed_nr_frames,initialization_ms=initialization_ms,
                 engine_timing_note="stage_ms includes synchronization; gpu_stage_ms is native timestamp timing. Counts include pre-roll. Reused final segments do not count as this-run NR work.")
         checkpoint["metrics"]["total_wall_ms"] = (time.monotonic() - started) * 1000
-        checkpoint["output"] = {"codec": args.codec, "timing": args.timing, "bytes": Path(args.out).stat().st_size}
-        checkpoint["output"]["hdr_mode"]="sdr_tonemapped" if transfer!="sdr" and args.codec.startswith("h264_") else "static_hdr" if transfer!="sdr" else "sdr"
+        checkpoint["output"] = {"codec": actual_codec, "timing": args.timing, "bytes": Path(args.out).stat().st_size}
+        if args._vsr:
+            checkpoint["output"]["upscaler"] = "maxine_vsr_high"
+        if requested:
+            checkpoint["output"].update(interpolation=backend if not skipped else None,
+                                        frame_rate=checkpoint.get("interpolation_rate") or src["rate"])
+            if skipped:
+                checkpoint["output"]["interpolation_note"] = skipped
+        if actual_codec != nv.resolve_codec(args.codec):
+            checkpoint["output"]["requested_codec"] = nv.resolve_codec(args.codec)
+        checkpoint["output"]["hdr_mode"]="sdr_tonemapped" if transfer!="sdr" and actual_codec.startswith("h264_") else "static_hdr" if transfer!="sdr" else "sdr"
+        if checkpoint.get("interpolation_rate"):
+            frame_map["result_times"] = delivered_source_times(relative_times, src, args.timing, rate)
+            atomic_json(work/"frame-map.json", frame_map)
         atomic_json(checkpoint_path, checkpoint)
+        if checkpoint.get("interpolation_rate"):
+            for name in ("doubled.nut", "doubled.json"):
+                try:
+                    (work / name).unlink(missing_ok=True)
+                except OSError:
+                    emit("NRINFO", {"message": "补帧临时文件暂时无法清理；成片已完成。"})
         emit("NRMETRICS", checkpoint["metrics"])
         emit("NRJOB", {"frame": checkpoint["total_frames"], "total_frames": checkpoint["total_frames"],
                        "progress": 100, "phase": "done", "message": "视频导出完成"})

@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from PIL import Image, ImageOps, UnidentifiedImageError
 import render_engine as engine
+import nvidia_video
 import nr_video
 import studio_storage
 import studio_cache
@@ -198,8 +199,9 @@ def public_job(job):
 
 def check_nvenc(codec):
     try:
+        pixel = "nv12" if codec == "h264_nvenc" else "p010le"
         return subprocess.run([engine.find_tool("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
-            "color=s=128x128:d=0.04", "-frames:v", "1", "-c:v", codec, "-f", "null", "-"],
+            "color=s=640x360:r=24:d=0.05", "-frames:v", "1", "-pix_fmt", pixel, "-c:v", codec, "-f", "null", "-"],
             capture_output=True, timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -269,6 +271,7 @@ class Settings(BaseModel):
     warmup_frames: int = Field(16, ge=0, le=120)
     preserve_media: bool = True
     timing_mode: Literal["preserve", "cfr"] = "preserve"
+    frame_interpolation: bool = False
     diagnostic: bool = False
 
     @model_validator(mode="before")
@@ -325,6 +328,10 @@ def build_command(s, item, folder, selection, render_key=None, stage_key=None):
             "--codec", s.codec, "--enc-preset", s.enc_preset, "--bit-depth", str(s.bit_depth),
             "--prores-profile", s.prores_profile, "--audio", s.audio, "--cq", str(s.cq),
             "--bitrate", str(bitrate)] + sr + model_args(s, for_video=True, selection=selection) + engine.size_args_video(s.size, 0, 0, 1)
+    if getattr(selection, "profile", None) in ("rtx30", "rtx40", "rtx50"):
+        args += ["--nvidia-profile", selection.profile, "--gpu-luid", selection.luid]
+    if s.frame_interpolation:
+        args.append("--frame-interpolation")
     if s.motion_vis:
         args.append("--nr-motion-vis")
     if s.frames:
@@ -343,7 +350,9 @@ def build_command(s, item, folder, selection, render_key=None, stage_key=None):
 
 @api.get("/api/options")
 def options():
-    return {"sizes": list(get_args(OutputSize)), "hardware": GPU.public(),
+    hardware = GPU.public()
+    return {"sizes": list(get_args(OutputSize)), "hardware": hardware,
+            "nvidia_video": nvidia_video.capabilities(hardware.get("profile")),
             "codecs": engine.CODECS, "containers": engine.CONTAINERS,
             "nvenc_available": NVENC_AVAILABLE, "encoder_available": ENCODER_AVAILABLE,
             "video_defaults": {"codec": DEFAULT_CODEC, "container": "mp4", "bitrate_mode": "auto",
@@ -601,8 +610,10 @@ def run_queued(jid):
 
 def completed_match(key, exclude=None):
     for candidate in sorted(jobs.values(), key=lambda j: (j.get("finished_at") or 0), reverse=True):
+        output = candidate.get("output_profile", {})
         if candidate["id"] != exclude and candidate.get("runtime", {}).get("cacheable", True) \
-                and candidate.get("cache_key") == key and studio_cache.valid_result(candidate):
+                and candidate.get("cache_key") == key and not (output.get("requested_codec") or output.get("interpolation_note")) \
+                and studio_cache.valid_result(candidate):
             return candidate
     return None
 
@@ -804,8 +815,6 @@ def render(jid, s, item, selection):
             log = jobs[jid].get("log", "")
             if any(marker in log for marker in ("OutOfDate", "0xBAD0000C", "BAD0000C")):
                 raise RuntimeError("显卡驱动与 DLSS 5 组件未能完成初始化，请检查驱动和处理日志。")
-            if "required nvenc API version" in log or "minimum required Nvidia driver" in log:
-                raise RuntimeError("当前驱动不支持此编码，请选择 CPU 编码后重试。")
             raise RuntimeError("处理未完成，请展开处理日志查看原因。")
         files = list(folder.glob("*_nr.png")) if item["kind"] == "image" else [folder / ("result." + s.container)]
         if not files or not files[0].is_file() or files[0].stat().st_size == 0:
@@ -842,7 +851,7 @@ def render(jid, s, item, selection):
                                     output_profile=checkpoint.get("output", {}))
             except (OSError, ValueError):
                 pass
-            if (s.container, s.codec) not in engine.BROWSER_PLAYABLE or info.get("trc") in {"smpte2084", "arib-std-b67"}:
+            if (s.container, stage_values.get("output_profile", {}).get("codec", s.codec)) not in engine.BROWSER_PLAYABLE or info.get("trc") in {"smpte2084", "arib-std-b67"}:
                 update_job(jid, phase="preview", progress=None, message="增强已完成，正在生成预览…", eta=None)
                 preview = engine.make_preview(str(result), runner=group, nvenc=NVENC_AVAILABLE,
                                               progress=lambda values: update_job(jid, **values))
@@ -873,8 +882,13 @@ def render(jid, s, item, selection):
                 continuous = getattr(GPU, "mark_continuous_verified", None)
                 if callable(continuous):
                     continuous(selection)
+            message = "已复用增强阶段并生成新结果。" if stage_source else "处理完成，可以查看并下载结果。"
+            if stage_values.get("output_profile", {}).get("requested_codec"):
+                message = "显卡编码失败，已自动切换到 CPU 编码并完成导出。"
+            if note := stage_values.get("output_profile", {}).get("interpolation_note"):
+                message += note
             update_job(jid, save=True, status="done", phase="done", progress=100, eta=None,
-                message="已复用增强阶段并生成新结果。" if stage_source else "处理完成，可以查看并下载结果。",
+                message=message,
                 result_path=str(result), width=width, height=height, **stage_values,
                 result_sha256=result_hash, result_stat=[stat.st_size, stat.st_mtime_ns],
                 preview_path=str(preview) if preview else None, finished_at=time.time(), metrics=metrics,
@@ -898,6 +912,12 @@ def render(jid, s, item, selection):
             if group:
                 group.close()
         finally:
+            if item["kind"] == "video":
+                # A forced process exit bypasses the worker's own cleanup.
+                try:
+                    studio_cache.owned_path(OUTPUTS, f"{jid}/work/doubled.partial.nut").unlink(missing_ok=True)
+                except (OSError, ValueError):
+                    pass
             with mutex:
                 runners.pop(jid, None)
                 cancellation.pop(jid, None)
