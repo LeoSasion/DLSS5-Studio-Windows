@@ -2,7 +2,7 @@
 
 面向 Windows 的本地 DLSS 图片与视频增强工作台，提供中文界面、深浅主题和无边框独立窗口。
 
-**[v1.5.0-preview.1 Windows x64 更新包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1)** · [正式版 v1.4.0](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0)
+**[v1.5.0-preview.2 Windows x64 更新包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.2)** · [正式版 v1.4.0](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.4.0)
 
 ## 快速使用
 
@@ -12,19 +12,25 @@
 
 需要 Windows 10/11 x64、兼容的 NVIDIA 显卡与驱动。独立窗口使用 Microsoft WebView2，缺少时可通过包内微软引导组件联网安装。从旧版升级请解压到新目录并保留旧包。
 
-v1.5.0-preview.1 恢复 NVENC 硬件编码与编码失败后的自动回退，减少视频增强的 GPU 等待，并接入可选的 NVIDIA Maxine 超分与补帧。NR 运行库保持 **310.9.16.0**。旧的 v1.4.0 继续作为正式版。
+当前预览版支持 NVENC 硬件编码与失败后的自动回退，也可选装 NVIDIA Maxine 超分与补帧。v1.5.0-preview.2 优化了缩小输出时的补帧耗时，并修复下方列出的问题。NR 运行库保持 **310.9.16.0**，v1.4.0 继续作为正式版。
 
 ### 安装 Windows 预览版
 
-1. 将 [v1.4.0 Windows x64 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip) 解压到一个新的可写目录，不覆盖日常使用的副本。
-2. 在 [预览版发布页](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.1) 下载 `DLSS-Studio-v1.5.0-preview.1-Update.zip`，解压到刚准备的新目录，使 `apply-preview.py` 与 `DLSS Studio.exe` 同级。附件含 SHA-256 校验文件。
-3. 在该目录打开 PowerShell，运行以下命令。更新程序会先下载并校验固定版本的 FFmpeg，再应用预览文件。安装完成后，双击 `DLSS Studio.exe`。
+1. 将 [v1.4.0 Windows x64 完整包](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/download/v1.4.0/DLSS-Studio-Windows-x64.zip) 解压到一个新的可写目录；已经装过 preview.1 的用户也请从新的 v1.4.0 副本开始。
+2. 在 [预览版发布页](https://github.com/LeoSasion/DLSS5-Studio-Windows/releases/tag/v1.5.0-preview.2) 下载 `DLSS-Studio-v1.5.0-preview.2-Update.zip`，解压到刚准备的新目录，使 `apply-preview.py` 与 `DLSS Studio.exe` 同级。附件含 SHA-256 校验文件。
+3. 先关闭工作台，在该目录打开 PowerShell，运行以下命令。更新程序会先下载并校验固定版本的 FFmpeg，再应用预览文件。安装完成后，双击 `DLSS Studio.exe`。
 
    ```powershell
    .\runtime\python.exe .\apply-preview.py
    ```
 
-若自动下载失败，可以从[固定 FFmpeg 构建](https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/tag/autobuild-2026-04-30-13-44)手动下载 `ffmpeg-N-124278-gcc3ca17127-win64-lgpl.zip`，再运行 `.untimepython.exe .apply-preview.py --ffmpeg-archive 'D:Downloadsfmpeg-N-124278-gcc3ca17127-win64-lgpl.zip'`，将路径换成文件的实际位置。
+如果更新提示文件被占用，关闭工作台后在同一目录重新运行更新命令即可。
+
+若自动下载失败，从[固定 FFmpeg 构建](https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/tag/autobuild-2026-04-30-13-44)手动下载同名 ZIP，再运行以下命令。将示例路径换成文件的实际位置。
+
+```powershell
+.\runtime\python.exe .\apply-preview.py --ffmpeg-archive 'D:\Downloads\ffmpeg-N-124278-gcc3ca17127-win64-lgpl.zip'
+```
 
 ## 使用 NVIDIA 超分和补帧
 
@@ -49,6 +55,24 @@ v1.5.0-preview.1 恢复 NVENC 硬件编码与编码失败后的自动回退，�
 | RTX 30 | Maxine VSR High 路径；尚未实机验证 | FRUC 开发预览，需另取官方 Optical Flow SDK 5.0.7 构建；**尚未用官方 SDK 构建或在 RTX 30 实机验证**。不支持把 VFG 当作 RTX 30 的备用方案 |
 
 HDR 和可变帧率没有纳入本轮补帧预览。RTX 30 的 FRUC 开发配置见[本地构建说明](packaging/README-nvidia-video.md)。
+
+### v1.5.0-preview.2：4K 转 1080p 补帧实测
+
+在 RTX PRO 6000 Blackwell Workstation Edition（驱动 591.86）上，使用同一段 **1 秒 SDR 样片**，从 3840×2160、24 fps 导出到 1920×1080、48 fps，两版均使用 VFG High 和 NVENC AV1 10-bit。以下为单次短样片对比，不代表长视频的耗时。
+
+| 耗时 | preview.1 | preview.2 | 耗时减少 |
+| --- | ---: | ---: | ---: |
+| VFG 补帧阶段 | 76.187 秒 | 22.000 秒 | 71.1% |
+| 整个导出任务 | 130.063 秒 | 68.437 秒 | 47.4% |
+
+输出实测为 48 帧，音视频均从 0 开始、时长均为 1 秒；两版输出的解码音频 SHA-256 相同。
+
+这版修复了以下问题：
+
+- 缩小输出时先缩到目标尺寸再补帧，避免处理最终不会保留的高分辨率像素。
+- 对时间戳确实符合恒定帧率的素材使用准确帧率，修正部分旧导出重新导入后无法得到精确 48 fps 的问题；任务进度会明确显示正在补帧。
+- 缺少 Maxine 依赖时正确禁用受影响的功能，保留常规导出；缺少 FFmpeg 时，NVENC 探测不会导致服务启动失败。
+- 取消排队任务时，如果恰逢 GPU 初始化失败，任务保持「已取消」。更新文件被占用时，关闭工作台并重跑即可继续安装。
 
 ## 当前功能
 
@@ -145,7 +169,7 @@ HDR 选支持的 10 bit 编码或高精度母版格式；H.264 导出明确映�
 
 本版完整包已包含这些改动，合并记录见 [PR #1](https://github.com/LeoSasion/DLSS5-Studio-Windows/pull/1)。R2 审查修订已在 RTX PRO 6000 Blackwell、驱动 591.86、原版 NR 310.9.16.0 上完成真实图片/视频 GPU 渲染及独立桌面 E2E。验证范围限于下述短样片与功能，不承诺跨显卡兼容性、普遍提速比例或与旧 CPU 路径逐字节相同。
 
-当时的 RTX VSR 条件构建路径（`--rtx-video-sdk`）未启用。v1.5.0-preview.1 的独立 Maxine VSR/VFG 路径见上方使用说明。310.9.16 Network B 更轻量且输出更温和，不将其描述为与 A 画面相同的无损提速。
+当时的 RTX VSR 条件构建路径（`--rtx-video-sdk`）未启用。v1.5.0-preview.2 的独立 Maxine VSR/VFG 路径见上方使用说明。310.9.16 Network B 更轻量且输出更温和，不将其描述为与 A 画面相同的无损提速。
 
 第二轮 R2 加入原尺寸 `detail=0` 原始帧直通、后处理批量提交、FP32 纹理轮换、FP16 缓存直接传输与六个相关着色器预编译。未启用模型缓存时跳过整帧缓存指纹；NR 日志明确区分推理、缓存和直通。新增 GPU 后处理耗时统计。原有强度和尺寸含义不变，仍不新增界面选项。
 

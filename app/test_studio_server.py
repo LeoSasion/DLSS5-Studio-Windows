@@ -192,10 +192,28 @@ class StudioContractTests(unittest.TestCase):
             self.assertEqual(self.client.post('/api/jobs',json=payload).json(),first)
             submit.assert_called_once()
             self.assertEqual(self.client.post('/api/jobs',json={**payload,'intensity':.5}).status_code,409)
-        jid=first['id']; self.assertEqual(self.client.post(f'/api/jobs/{jid}/cancel').json()['status'],'cancelling')
-        server.render(jid,server.Settings(**payload),server.assets[item['id']],self.selection)
+        jid=first['id']; self.assertEqual(self.client.post(f'/api/jobs/{jid}/cancel').json()['status'],'cancelled')
+        with patch.object(server.GPU, 'prepare') as prepare:
+            server.run_queued(jid)
+            prepare.assert_not_called()
         self.assertEqual(server.jobs[jid]['status'],'cancelled');self.assertFalse(server.health()['busy'])
+        self.assertNotIn(jid, server.cancellation)
         self.assertFalse((self.outputs/jid).exists())
+
+    def test_cancelled_queue_stays_cancelled_if_gpu_preparation_fails(self):
+        item = self.upload()
+        with patch.object(server.worker, 'submit'):
+            jid = self.client.post('/api/jobs', json={'asset_id': item['id']}).json()['id']
+
+        def cancel_and_fail():
+            response = self.client.post(f'/api/jobs/{jid}/cancel')
+            self.assertEqual(response.json()['status'], 'cancelled')
+            raise OSError('GPU initialization failed')
+
+        with patch.object(server.GPU, 'prepare', side_effect=cancel_and_fail):
+            server.run_queued(jid)
+        self.assertEqual(server.jobs[jid]['status'], 'cancelled')
+        self.assertNotIn(jid, server.cancellation)
 
     def test_running_cancel_reaches_owned_process_group(self):
         item=self.upload(); jid=self.job(item);server.jobs[jid]['status']='running'

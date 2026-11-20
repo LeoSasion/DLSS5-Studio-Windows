@@ -305,8 +305,9 @@ def monitor_pipeline(commands, total, offset, warm, overall, args, interpolation
                      "eta": nv.fmt_eta((overall-visible[0])/fps) if fps else "--:--",
                      "phase": "render", "message": "正在增强视频"})
             elif interpolation_work and (count := re.fullmatch(r"VFXPROG (\d+)", line)):
-                emit("NRJOB", {"frame": min(total, int(count[1])), "total_frames": total,
-                     "progress": 94, "phase": "render", "message": "正在补帧 ×2"})
+                frame = min(total, int(count[1]))
+                emit("NRJOB", {"frame": frame, "total_frames": total, "progress": 94,
+                     "phase": "interpolation", "message": f"正在补帧 ×2 · {frame}/{total} 源帧"})
             elif engine and line.startswith("NRMETRIC "):
                 try:
                     metrics.append(json.loads(line[len("NRMETRIC "):]))
@@ -635,12 +636,18 @@ def concat_input(work, segments):
 
 
 def double_rate(src, timestamps):
-    rate = Fraction(src["rate"])
-    # Compare PTS against the nominal grid without letting rounding grow over time.
-    if len(timestamps) < 2 or any(abs(stamp - timestamps[0] - index / float(rate)) > .001
-                                  for index, stamp in enumerate(timestamps)):
+    if len(timestamps) < 2:
         return None
-    return str(rate * 2)
+    # Containers may round the frame durations used for avg_frame_rate. Trust a
+    # nominal cadence only when it agrees with the actual frame timestamps.
+    for value in dict.fromkeys((src.get("nominal_rate"), src["rate"])):
+        if value:
+            rate = Fraction(value)
+            period = 1.0 / float(rate)
+            if all(abs(stamp - timestamps[0] - index * period) <= .001
+                   for index, stamp in enumerate(timestamps)):
+                return str(rate * 2)
+    return None
 
 
 def delivered_source_times(relative_times, src, timing, interpolation_rate=None):
@@ -650,13 +657,15 @@ def delivered_source_times(relative_times, src, timing, interpolation_rate=None)
     return relative_times if timing == "preserve" else [round(round(stamp*src["fps"])/src["fps"],6) for stamp in relative_times]
 
 
-def interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate):
+def interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate, out_dimensions):
     target = work / "doubled.nut"
     partial = target.with_suffix(".partial.nut")
     validation = work / "doubled.json"
     check_interpolation(work, args.pause_file)
     identity_files = nvidia_video.effect_files(backend)
-    key = [backend, rate, *[digest(path) for path in identity_files], *[part["sha256"] for part in checkpoint["segments"]]]
+    width, height = out_dimensions
+    key = [backend, rate, width, height, *[digest(path) for path in identity_files],
+           *[part["sha256"] for part in checkpoint["segments"]]]
     if target.is_file() and validation.is_file():
         try:
             previous = json.loads(validation.read_text(encoding="utf-8"))
@@ -664,17 +673,19 @@ def interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, ra
                 return target
         except (OSError, ValueError):
             pass
-    width, height = checkpoint["dimensions"]
     pixel = checkpoint["pixel_format"]
     ipc_pixel = "bgra" if backend == "fruc" else pixel
     decode = [ffmpeg, "-v", "error", *concat_input(work, checkpoint["segments"]), "-map", "0:v:0",
-              "-an", "-fps_mode", "passthrough", "-pix_fmt", ipc_pixel, "-f", "rawvideo", "-"]
+              "-an", "-fps_mode", "passthrough"]
+    if tuple(checkpoint["dimensions"]) != out_dimensions:
+        decode += ["-vf", f"scale={width}:{height}:flags={nv.SWS}"]
+    decode += ["-pix_fmt", ipc_pixel, "-f", "rawvideo", "-"]
     tag = nv.colour_tags(src)
     filters = f"format={'bgra' if pixel == 'rgba' else pixel},setparams=colorspace=gbr:color_primaries={tag[1]}:color_trc={tag[2]}:range=pc"
     encode = [ffmpeg, "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", ipc_pixel, "-s", f"{width}x{height}",
               "-framerate", rate, "-i", "-", "-vf", filters, "-c:v", "ffv1", "-g", "1", "-f", "nut", str(partial)]
     total = checkpoint["total_frames"]
-    emit("NRJOB", {"frame": 0, "total_frames": total, "progress": 94, "phase": "render", "message": "正在补帧 ×2"})
+    emit("NRJOB", {"frame": 0, "total_frames": total, "progress": 94, "phase": "interpolation", "message": "正在补帧 ×2"})
     try:
         monitor_pipeline([decode, vfx_command(args, backend, pixel, (width, height), source_fps=src["fps"]), encode],
                          total, 0, 0, total, args, interpolation_work=work)
@@ -733,11 +744,12 @@ def export_video_attempt(args, src, checkpoint, work, ffmpeg, out_dimensions, ex
     flags, pixel = nv.video_args(codec, encoded, *out_dimensions, tags)
     if codec == "ffv1" and checkpoint["pixel_format"] == "rgba64le":
         pixel = "rgba64le"
-    master = ["-i", str(work / "doubled.nut")] if checkpoint.get("interpolation_rate") else concat_input(work, checkpoint["segments"])
+    doubled = checkpoint.get("interpolation_rate")
+    master = ["-i", str(work / "doubled.nut")] if doubled else concat_input(work, checkpoint["segments"])
     filters = []
     if tone_map:
         filters.append(sdr_proxy_filter({**src,"primaries":checkpoint.get("working_primaries",src["primaries"])}))
-    if checkpoint["dimensions"] != list(out_dimensions):
+    if not doubled and checkpoint["dimensions"] != list(out_dimensions):
         filters.append(f"scale={out_dimensions[0]}:{out_dimensions[1]}:flags={nv.SWS}")
     rgb = pixel in {"bgr0", "bgra", "rgba64le", "rgb48le", "gbrp16le"}
     if not rgb:
@@ -953,7 +965,7 @@ def run_pipeline(args):
         elif requested:
             fx_started = time.monotonic()
             try:
-                interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate)
+                interpolate_master(args, src, checkpoint, work, ffmpeg, ffprobe, backend, rate, desired)
                 check_interpolation(work, args.pause_file)
             except InterpolationPaused:
                 emit("NRSTATE", {"status": "paused", "completed_frames": checkpoint["total_frames"]})

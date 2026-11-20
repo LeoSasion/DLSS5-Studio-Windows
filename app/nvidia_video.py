@@ -1,12 +1,16 @@
 """Optional official NVIDIA video effects, isolated from the app's Python environment."""
 import argparse
 from contextlib import ExitStack
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 import sys
 
 RUNTIME = Path(__file__).resolve().parent / 'out/nvidia-vfx'
 FRUC = Path(__file__).resolve().parent / 'out/nvidia-fruc/studio-fruc.exe'
 VFX_BINARIES = ('NVVideoEffects.dll', 'nvVFXVideoSuperRes.dll', 'nvVFXVideoFrameGeneration.dll', 'nvngx_vsr.dll')
+VFX_IMPORTS = ('nvvfx/__init__.py', 'cupy/__init__.py', 'fastrlock/__init__.py',
+               *(name + EXTENSION_SUFFIXES[0] for name in
+                 ('nvvfx/_ext', 'cupy/_core/core', 'cupy_backends/cuda/api/driver', 'fastrlock/rlock')))
 FRUC_BINARY = 'NvOFFRUC.dll'
 
 
@@ -15,16 +19,13 @@ def effect_files(effect):
         return [FRUC, FRUC.with_name(FRUC_BINARY), *sorted(FRUC.parent.glob('cudart64*.dll'))]
     return [Path(__file__), *(RUNTIME / 'nvvfx/libs' / name for name in VFX_BINARIES
                               if effect == 'vfg' or name != VFX_BINARIES[2]),
-            *sorted((RUNTIME / 'nvvfx').glob('_ext*.pyd'))]
+            *(RUNTIME / name for name in VFX_IMPORTS)]
 
 
 def capabilities(profile):
-    libs = RUNTIME / 'nvvfx/libs'
-    installed = (RUNTIME / 'nvvfx/__init__.py').is_file() and (RUNTIME / 'cupy/__init__.py').is_file()
-    vsr = bool(installed and profile in ('rtx30', 'rtx40', 'rtx50')
-               and all((libs / name).is_file() for name in VFX_BINARIES if 'Generation' not in name))
+    vsr = profile in ('rtx30', 'rtx40', 'rtx50') and all(path.is_file() for path in effect_files('vsr')[1:])
     return {'upscale': vsr, 'interpolation': (
-        'vfg' if vsr and profile in ('rtx40', 'rtx50') and (libs / VFX_BINARIES[2]).is_file()
+        'vfg' if vsr and profile in ('rtx40', 'rtx50') and (RUNTIME / 'nvvfx/libs' / VFX_BINARIES[2]).is_file()
         else 'fruc' if profile == 'rtx30' and FRUC.is_file() and FRUC.with_name(FRUC_BINARY).is_file()
         else None)}
 

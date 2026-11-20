@@ -26,8 +26,9 @@ def main():
     spec = json.loads((patch / 'patch.json').read_text(encoding='utf-8'))
     for name, expected in spec['base'].items():
         original = root / name
-        if not original.resolve().is_relative_to(root) or not original.is_file() or digest(original) != expected:
-            raise SystemExit(f'Expected an unmodified v1.4.0 portable copy: {name}')
+        if (not original.resolve().is_relative_to(root) or not original.is_file()
+                or digest(original) not in (expected, spec['files'].get(name))):
+            raise SystemExit(f'Expected a v1.4.0 portable copy or a previous run of this update: {name}')
     with tempfile.TemporaryDirectory(prefix='stage-', dir=patch) as directory:
         stage = Path(directory)
         archive = args.ffmpeg_archive
@@ -53,7 +54,16 @@ def main():
             replacements[target] = source
         for target, source in replacements.items():
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            # A failed copy or locked target must leave the previous file readable.
+            with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as stream:
+                staged = Path(stream.name)
+            try:
+                shutil.copy2(source, staged)
+                staged.replace(target)
+            except PermissionError as exc:
+                raise SystemExit(f'Cannot replace {target.name}. Close DLSS Studio and rerun the update.') from exc
+            finally:
+                staged.unlink(missing_ok=True)
     print('Preview update installed. Open DLSS Studio.exe.', flush=True)
 
 

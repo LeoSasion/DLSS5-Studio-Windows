@@ -19,9 +19,10 @@ class NvidiaVideoTests(unittest.TestCase):
             fruc = root / 'studio-fruc.exe'
             libs = root / 'nvvfx/libs'
             libs.mkdir(parents=True)
-            (root / 'nvvfx/__init__.py').touch()
-            (root / 'cupy').mkdir()
-            (root / 'cupy/__init__.py').touch()
+            for name in nv.VFX_IMPORTS:
+                dependency = root / name
+                dependency.parent.mkdir(parents=True, exist_ok=True)
+                dependency.touch()
             for name in nv.VFX_BINARIES:
                 (libs / name).touch()
             with patch.object(nv, 'RUNTIME', root), patch.object(nv, 'FRUC', fruc):
@@ -33,6 +34,11 @@ class NvidiaVideoTests(unittest.TestCase):
                 self.assertEqual(nv.capabilities('rtx30'), {'upscale':True, 'interpolation':'fruc'})
                 (libs / 'nvVFXVideoFrameGeneration.dll').unlink()
                 self.assertEqual(nv.capabilities('rtx50'), {'upscale':True, 'interpolation':None})
+                lock_extension = root / nv.VFX_IMPORTS[-1]
+                self.assertIn(lock_extension, nv.effect_files('vfg'))
+                lock_extension.unlink()
+                self.assertEqual(nv.capabilities('rtx50'), {'upscale':False, 'interpolation':None})
+                self.assertEqual(nv.capabilities('rtx30'), {'upscale':False, 'interpolation':'fruc'})
 
     def test_fractional_pts_with_offset_and_vfr_gap(self):
         rate = {'rate':'30000/1001'}
@@ -40,6 +46,13 @@ class NvidiaVideoTests(unittest.TestCase):
         self.assertEqual(vp.double_rate(rate, points), '60000/1001')
         points[144] += .012
         self.assertIsNone(vp.double_rate(rate, points))
+
+    def test_rounded_container_average_uses_verified_nominal_rate(self):
+        source = {'rate': '48000000/1999999', 'nominal_rate': '24/1'}
+        points = [round(index / 24, 6) for index in range(48)]
+        self.assertEqual(vp.double_rate(source, points), '48')
+        source['nominal_rate'] = '30/1'
+        self.assertEqual(vp.double_rate(source, points), '96000000/1999999')
 
     def test_comparison_uses_actual_delivery_times_for_jittery_cfr(self):
         original = [0., .0421, .0838]
@@ -57,14 +70,18 @@ class NvidiaVideoTests(unittest.TestCase):
             checkpoint = {'dimensions':[720, 480], 'pixel_format':'rgba', 'total_frames':2,
                           'segments':[{'path':segment.name, 'sha256':vp.digest(segment), 'start':0, 'end':.1}]}
             src = {'fps':24,'w':720,'h':480,'matrix':'bt709','primaries':'bt709','trc':'bt709'}
-            def request_pause(*args, **kwargs):
+            def request_pause(commands, *args, **kwargs):
+                self.assertIn(f'scale=360:240:flags={vp.nv.SWS}', commands[0])
+                self.assertEqual(commands[1][3:5], ['360', '240'])
+                self.assertIn('360x240', commands[2])
                 (root / 'doubled.partial.nut').write_bytes(b'incomplete')
                 marker.touch()
                 vp.check_interpolation(root, marker)
             with patch.object(nv, 'effect_files', return_value=[segment]), patch.object(vp, 'monitor_pipeline', side_effect=request_pause), \
                     patch.object(vp, 'emit'), patch.object(vp.shutil, 'disk_usage', return_value=SimpleNamespace(free=3*1024**3)):
                 with self.assertRaises(vp.InterpolationPaused):
-                    vp.interpolate_master(SimpleNamespace(pause_file=marker, _gpu_luid=''), src, checkpoint, root, 'ffmpeg', 'ffprobe', 'vfg', '48')
+                    vp.interpolate_master(SimpleNamespace(pause_file=marker, _gpu_luid=''), src, checkpoint, root,
+                                          'ffmpeg', 'ffprobe', 'vfg', '48', (360, 240))
             self.assertFalse((root / 'doubled.partial.nut').exists())
             self.assertEqual(segment.read_bytes(), b'original segment')
 

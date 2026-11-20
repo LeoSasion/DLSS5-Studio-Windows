@@ -13,10 +13,15 @@ sys.path.insert(0,str(ROOT/'app'))
 import render_engine as engine
 import nr_video
 import video_pipeline
-from studio_server import Settings, build_command
+from studio_server import Settings, build_command, check_nvenc
 
 
 class VideoExportTests(unittest.TestCase):
+    def test_missing_ffmpeg_disables_nvenc_probe(self):
+        with patch.object(engine, 'find_tool', return_value=None), patch('studio_server.subprocess.run') as run:
+            self.assertFalse(check_nvenc('av1_nvenc'))
+            run.assert_not_called()
+
     def test_os_defaults_and_independent_codec_support(self):
         for build,gpu,cpu in [(19045,'h264_nvenc','h264_cpu'),(22000,'av1_nvenc','av1_svt'),(26200,'av1_nvenc','av1_svt')]:
             self.assertEqual(engine.default_video_codec(build,{}),cpu)

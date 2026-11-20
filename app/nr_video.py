@@ -104,7 +104,8 @@ def probe(ffprobe, path):
             return float(num) > 0 and float(den) > 0
         except (ValueError, TypeError):
             return False
-    rate = next((value for value in (v.get("avg_frame_rate"), v.get("r_frame_rate")) if valid_rate(value)), "25/1")
+    nominal_rate = v.get("r_frame_rate") if valid_rate(v.get("r_frame_rate")) else None
+    rate = v["avg_frame_rate"] if valid_rate(v.get("avg_frame_rate")) else nominal_rate or "25/1"
     num, den = (rate.split("/") + ["1"])[:2]
     fps = float(num) / float(den or 1)
     try:
@@ -129,7 +130,7 @@ def probe(ffprobe, path):
     stream_duration=number(v.get("duration"))
     extent=max(0,video_start-format_start)+stream_duration if stream_duration else number(info.get("format", {}).get("duration"),frames/fps if fps else 0)
     return {
-        "w": width, "h": height, "rotation": rotation, "fps": fps, "rate": rate, "frames": frames,
+        "w": width, "h": height, "rotation": rotation, "fps": fps, "rate": rate, "nominal_rate": nominal_rate, "frames": frames,
         "duration": extent,
         "pix_fmt": v.get("pix_fmt", ""), "range": unk(v.get("color_range")),
         "matrix": unk(v.get("color_space")), "primaries": unk(v.get("color_primaries")),

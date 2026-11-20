@@ -199,8 +199,11 @@ def public_job(job):
 
 def check_nvenc(codec):
     try:
+        ffmpeg = engine.find_tool("ffmpeg")
+        if not ffmpeg:
+            return False
         pixel = "nv12" if codec == "h264_nvenc" else "p010le"
-        return subprocess.run([engine.find_tool("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+        return subprocess.run([ffmpeg, "-v", "error", "-f", "lavfi", "-i",
             "color=s=640x360:r=24:d=0.05", "-frames:v", "1", "-pix_fmt", pixel, "-c:v", codec, "-f", "null", "-"],
             capture_output=True, timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
@@ -525,7 +528,8 @@ def progress_values(line):
         try:
             value = json.loads(line[6:])
             frame, total = int(value.get("frame", 0)), int(value.get("total_frames", 0))
-            return {"phase": "encoding" if value.get("phase") == "encoding" else "render",
+            phase = value.get("phase")
+            return {"phase": phase if phase in ("encoding", "interpolation") else "render",
                     "message": str(value.get("message") or "正在增强视频")[:160],
                     "frame": max(0, frame), "total_frames": max(0, total),
                     "progress": max(0, min(99, int(value.get("progress", frame * 100 / total if total else 0)))),
@@ -570,7 +574,7 @@ def submit_queued(jid):
 def run_queued(jid):
     with mutex:
         job = jobs.get(jid)
-        if not job or job.get("status") not in {"queued", "cancelling"} or shutdown_requested.is_set():
+        if not job or job.get("status") != "queued" or shutdown_requested.is_set():
             return
         item = assets.get(job.get("asset_id"))
         if not item or not Path(item["path"]).is_file():
@@ -583,6 +587,8 @@ def run_queued(jid):
         identity = runtime_identity(selection)
         key, nr_key = studio_cache.render_keys(settings, item, identity)
         with mutex:
+            if jobs.get(jid, {}).get("status") != "queued" or shutdown_requested.is_set():
+                return
             # Resuming under different weights/drivers must not mix old temporal
             # segments with new ones. Keep the old checkpoint available to inspect.
             old_key = jobs[jid].get("nr_key")
@@ -605,7 +611,10 @@ def run_queued(jid):
             jobs[jid]["stage_key"] = studio_cache.model_stage_key(settings, item, identity)
         render(jid, settings, item, selection)
     except Exception as exc:
-        update_job(jid, save=True, status="error", phase="error", message=str(exc), finished_at=time.time())
+        with mutex:
+            if jobs.get(jid, {}).get("status") in {"queued", "running"}:
+                cancellation.pop(jid, None)
+                update_job(jid, save=True, status="error", phase="error", message=str(exc), finished_at=time.time())
 
 
 def completed_match(key, exclude=None):
@@ -1072,8 +1081,11 @@ def cancel_job(jid: str):
             raise HTTPException(404, "任务不存在。")
         if jobs[jid]["status"] not in RETAINED:
             return public_job(jobs[jid])
-        cancellation.setdefault(jid, threading.Event()).set()
         immediate = jobs[jid]["status"] in {"queued", "paused"}
+        if immediate:
+            cancellation.pop(jid, None)
+        else:
+            cancellation.setdefault(jid, threading.Event()).set()
         update_job(jid, save=True, status="cancelled" if immediate else "cancelling",
                    phase="cancelled" if immediate else "cancelling",
                    message="已取消处理。" if immediate else "正在取消处理…",
